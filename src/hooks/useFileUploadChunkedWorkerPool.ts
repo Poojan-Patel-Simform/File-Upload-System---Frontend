@@ -35,7 +35,7 @@ import api from "@/lib/axios";
 const CONCURRENCY = 5;
 
 const useFileUploadChunkedWorkerPool = () => {
-  const [file, setFile] = useState<File | null>(null);
+  const [file, setFileState] = useState<File | null>(null);
   const [status, setStatus] = useState<FileUploadingStatusEnum>(
     FileUploadingStatusEnum.IDlE,
   );
@@ -74,7 +74,11 @@ const useFileUploadChunkedWorkerPool = () => {
     cursorRef.current = 0;
     uploadedCountRef.current = startCount;
 
-    let firstError: Error | null = null;
+    // Boxed in an object rather than a bare `let` — TS's control-flow
+    // analysis doesn't widen a closure-mutated `let` back to its declared
+    // type at the read site below, so `firstError.message` would otherwise
+    // type-check as `never`.
+    const errorState: { firstError: Error | null } = { firstError: null };
     let wasPaused = false;
 
     const uploadOne = async (chunk: (typeof chunks)[number]) => {
@@ -98,7 +102,7 @@ const useFileUploadChunkedWorkerPool = () => {
     // queue empties, pause is requested, or an error/abort stops everything.
     const worker = async () => {
       while (cursorRef.current < chunks.length) {
-        if (firstError || wasPaused) return;
+        if (errorState.firstError || wasPaused) return;
 
         if (pausedRef.current) {
           wasPaused = true;
@@ -120,7 +124,7 @@ const useFileUploadChunkedWorkerPool = () => {
           if (err instanceof DOMException && err.name === "AbortError") {
             return; // cancel already resets state via handleCancel
           }
-          firstError =
+          errorState.firstError =
             err instanceof Error ? err : new Error("Unknown upload error");
           setLogs((prev) => [...prev, `[upload] chunk ${chunk.index} failed`]);
           return;
@@ -133,9 +137,9 @@ const useFileUploadChunkedWorkerPool = () => {
 
     if (abortController.signal.aborted) return; // handleCancel already reset state
 
-    if (firstError) {
+    if (errorState.firstError) {
       setStatus(FileUploadingStatusEnum.ERROR);
-      setErrorMessage(firstError.message);
+      setErrorMessage(errorState.firstError.message);
       return;
     }
 
@@ -159,6 +163,7 @@ const useFileUploadChunkedWorkerPool = () => {
       `[upload] complete — ${uploadedCountRef.current}/${chunkLength} chunks`,
     ]);
     setStatus(FileUploadingStatusEnum.COMPLETED);
+    setFileState(null);
     uploadStateRef.current = null;
   };
 
@@ -197,6 +202,7 @@ const useFileUploadChunkedWorkerPool = () => {
         ]);
         setUploadedCount(chunks.length);
         setStatus(FileUploadingStatusEnum.COMPLETED);
+        setFileState(null);
         return;
       }
 
@@ -251,7 +257,7 @@ const useFileUploadChunkedWorkerPool = () => {
     uploadStateRef.current = null;
     cursorRef.current = 0;
     uploadedCountRef.current = 0;
-    setFile(null);
+    setFileState(null);
     setStatus(FileUploadingStatusEnum.IDlE);
     setUploadedCount(0);
     setTotalChunks(0);
@@ -259,9 +265,22 @@ const useFileUploadChunkedWorkerPool = () => {
     setLogs((prev) => [...prev, "[upload] cancelled, state reset"]);
   };
 
+  // Selecting a new file also clears any leftover status/progress/logs from
+  // a previous upload, since the dropzone stays interactive after COMPLETED.
+  const handleSetFile = (newFile: File | null) => {
+    setFileState(newFile);
+    if (newFile) {
+      setStatus(FileUploadingStatusEnum.IDlE);
+      setErrorMessage(null);
+      setUploadedCount(0);
+      setTotalChunks(0);
+      setLogs([]);
+    }
+  };
+
   return {
     file,
-    setFile,
+    setFile: handleSetFile,
     status,
     handleUpload,
     handlePause,

@@ -45,10 +45,12 @@ export default function RootLayout({
         notoSansHeading.variable,
       )}
     >
-      <body className=" flex flex-col gap-8 max-w-7xl m-auto">
+      <body className="flex min-h-screen flex-col gap-8 pb-16">
         <Navbar />
-        <StrategyTab />
-        {children}
+        <div className="mx-auto flex w-full max-w-7xl flex-col gap-8">
+          <StrategyTab />
+          {children}
+        </div>
       </body>
     </html>
   );

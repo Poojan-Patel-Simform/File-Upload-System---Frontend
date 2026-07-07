@@ -12,7 +12,7 @@ import { generateFileChunks } from "@/lib/fileProcess";
 import api from "@/lib/axios";
 
 const useFileUploadChunkedSequential = () => {
-  const [file, setFile] = useState<File | null>(null);
+  const [file, setFileState] = useState<File | null>(null);
   const [status, setStatus] = useState<FileUploadingStatusEnum>(
     FileUploadingStatusEnum.IDlE,
   );
@@ -106,6 +106,7 @@ const useFileUploadChunkedSequential = () => {
       `[upload] complete — ${completedCount}/${chunkLength} chunks`,
     ]);
     setStatus(FileUploadingStatusEnum.COMPLETED);
+    setFileState(null);
     uploadStateRef.current = null;
   };
 
@@ -144,6 +145,7 @@ const useFileUploadChunkedSequential = () => {
         ]);
         setUploadedCount(chunks.length);
         setStatus(FileUploadingStatusEnum.COMPLETED);
+        setFileState(null);
         return;
       }
 
@@ -191,7 +193,7 @@ const useFileUploadChunkedSequential = () => {
     abortControllerRef.current?.abort();
     pausedRef.current = false;
     uploadStateRef.current = null;
-    setFile(null);
+    setFileState(null);
     setStatus(FileUploadingStatusEnum.IDlE);
     setUploadedCount(0);
     setTotalChunks(0);
@@ -199,9 +201,22 @@ const useFileUploadChunkedSequential = () => {
     setLogs((prev) => [...prev, "[upload] cancelled, state reset"]);
   };
 
+  // Selecting a new file also clears any leftover status/progress/logs from
+  // a previous upload, since the dropzone stays interactive after COMPLETED.
+  const handleSetFile = (newFile: File | null) => {
+    setFileState(newFile);
+    if (newFile) {
+      setStatus(FileUploadingStatusEnum.IDlE);
+      setErrorMessage(null);
+      setUploadedCount(0);
+      setTotalChunks(0);
+      setLogs([]);
+    }
+  };
+
   return {
     file,
-    setFile,
+    setFile: handleSetFile,
     status,
     handleUpload,
     handlePause,

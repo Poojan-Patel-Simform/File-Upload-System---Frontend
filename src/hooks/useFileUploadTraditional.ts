@@ -5,7 +5,7 @@ import api from "@/lib/axios";
 import { FileUploadingStatusEnum } from "@/types/file";
 
 const useFileUploadTraditional = () => {
-  const [file, setFile] = useState<File | null>(null);
+  const [file, setFileState] = useState<File | null>(null);
   const [status, setStatus] = useState<FileUploadingStatusEnum>(
     FileUploadingStatusEnum.IDlE,
   );
@@ -53,6 +53,7 @@ const useFileUploadTraditional = () => {
       setLogs((prev) => [...prev, "[upload] complete"]);
       setStatus(FileUploadingStatusEnum.COMPLETED);
       setProgress(100);
+      setFileState(null);
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") {
         setLogs((prev) => [...prev, "[upload] cancelled"]);
@@ -68,16 +69,28 @@ const useFileUploadTraditional = () => {
   // Cancel is the only mid-flight control available.
   const handleCancel = () => {
     abortControllerRef.current?.abort();
-    setFile(null);
+    setFileState(null);
     setStatus(FileUploadingStatusEnum.IDlE);
     setProgress(0);
     setErrorMessage(null);
     setLogs((prev) => [...prev, "[upload] cancelled, state reset"]);
   };
 
+  // Selecting a new file also clears any leftover status/progress/logs from
+  // a previous upload, since the dropzone stays interactive after COMPLETED.
+  const handleSetFile = (newFile: File | null) => {
+    setFileState(newFile);
+    if (newFile) {
+      setStatus(FileUploadingStatusEnum.IDlE);
+      setErrorMessage(null);
+      setProgress(0);
+      setLogs([]);
+    }
+  };
+
   return {
     file,
-    setFile,
+    setFile: handleSetFile,
     status,
     handleUpload,
     handleCancel,
