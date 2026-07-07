@@ -17,3 +17,41 @@ export type FileChunk = {
   size: number;
   chunk: Blob;
 };
+
+export enum UploadStatus {
+  NEW = "NEW",
+  UPLOADING = "UPLOADING",
+  COMPLETED = "COMPLETED",
+  MERGING = "MERGING",
+  FAILED = "FAILED",
+}
+
+export type InitUploadResponse = {
+  success: boolean;
+  data: {
+    status: "NEW" | "UPLOADING" | "COMPLETED" | "MERGING" | "FAILED";
+    uploadId: string;
+    uploadedChunks?: number[];
+    deduplicated?: boolean;
+  };
+};
+
+export type ChunkUploadResponse = {
+  success: boolean;
+  data: {
+    status: string;
+    uploadId: string;
+    chunkIndex: number;
+    uploadedChunks: number;
+    totalChunks: number;
+    isComplete: boolean;
+  };
+};
+
+export enum FileUploadingStatusEnum {
+  IDlE,
+  UPLOADING,
+  PAUSED,
+  COMPLETED,
+  ERROR,
+}

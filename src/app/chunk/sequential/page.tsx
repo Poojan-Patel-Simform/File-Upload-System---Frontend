@@ -2,14 +2,20 @@
 
 import Dropzone from "@/components/Dropzone";
 import { Button } from "@/components/ui/button";
-
-import useFileUploadTraditional from "@/hooks/useFileUploadTraditional";
+import useFileUploadChunkedSequential from "@/hooks/useFileUploadChunkedSequential";
 import { FileUploadingStatusEnum } from "@/types/file";
-import { Upload, X } from "lucide-react";
+import { Pause, Play, Upload, X } from "lucide-react";
 
 const Home = () => {
-  const { file, status, setFile, handleUpload, handleCancel } =
-    useFileUploadTraditional();
+  const {
+    file,
+    status,
+    setFile,
+    handleUpload,
+    handlePause,
+    handleResume,
+    handleCancel,
+  } = useFileUploadChunkedSequential();
 
   return (
     <div className="flex flex-col gap-6 p-5">
@@ -22,6 +28,20 @@ const Home = () => {
             <Button onClick={handleUpload}>
               <Upload />
               Upload
+            </Button>
+          )}
+
+          {status === FileUploadingStatusEnum.UPLOADING && (
+            <Button variant="secondary" onClick={handlePause}>
+              <Pause />
+              Pause
+            </Button>
+          )}
+
+          {status === FileUploadingStatusEnum.PAUSED && (
+            <Button onClick={handleResume}>
+              <Play />
+              Resume
             </Button>
           )}
 

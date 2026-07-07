@@ -7,16 +7,16 @@ import { cn } from "@/lib/utils";
 
 const STRATEGY_LIST = [
   {
-    title: "Server Disk",
+    title: "Traditional",
     path: "/",
   },
   {
-    title: "R2 direct",
-    path: "/cloudflare",
+    title: "Chunk Upload - Sequential",
+    path: "/chunk/sequential",
   },
   {
-    title: "Single Shot",
-    path: "/traditional",
+    title: "Chunk Upload - Worker Pool",
+    path: "/chunk/worker-pool",
   },
 ];
 
