@@ -1,102 +1,149 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import api from "@/lib/axios";
-import { FileUploadingStatusEnum } from "@/types/file";
+import { FileUploadingStatusEnum, UploadFileItem } from "@/types/file";
 
 const useFileUploadTraditional = () => {
-  const [file, setFileState] = useState<File | null>(null);
-  const [status, setStatus] = useState<FileUploadingStatusEnum>(
-    FileUploadingStatusEnum.IDlE,
+  const [files, setFiles] = useState<UploadFileItem[]>([]);
+
+  const fileMapRef = useRef<Record<string, File>>({});
+  const abortControllersRef = useRef<Record<string, AbortController>>({});
+
+  const updateFile = useCallback(
+    (
+      id: string,
+      patch:
+        | Partial<UploadFileItem>
+        | ((item: UploadFileItem) => Partial<UploadFileItem>),
+    ) => {
+      setFiles((prev) =>
+        prev.map((item) =>
+          item.id === id
+            ? { ...item, ...(typeof patch === "function" ? patch(item) : patch) }
+            : item,
+        ),
+      );
+    },
+    [],
   );
-  const [progress, setProgress] = useState(0);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [logs, setLogs] = useState<string[]>([]);
 
-  const abortControllerRef = useRef<AbortController | null>(null);
+  const appendLog = useCallback(
+    (id: string, line: string) =>
+      updateFile(id, (item) => ({ logs: [...item.logs, line] })),
+    [updateFile],
+  );
 
-  const handleUpload = async () => {
-    if (!file) return;
+  const handleUpload = useCallback(
+    async (id: string) => {
+      const file = fileMapRef.current[id];
+      if (!file) return;
 
-    setStatus(FileUploadingStatusEnum.UPLOADING);
-    setErrorMessage(null);
-    setProgress(0);
-    setLogs([
-      `[upload] starting traditional upload — ${file.name} (${file.size} bytes)`,
-    ]);
-
-    const abortController = new AbortController();
-    abortControllerRef.current = abortController;
-
-    try {
-      const formData = new FormData();
-      formData.append("file", file, file.name);
-      formData.append("fileName", file.name);
-      formData.append("fileSize", String(file.size));
-
-      const response = await api.post("/uploads/single", formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-        signal: abortController.signal,
-        onUploadProgress: (progressEvent) => {
-          if (!progressEvent.total) return;
-          const percent = Math.round(
-            (progressEvent.loaded * 100) / progressEvent.total,
-          );
-          setProgress(percent);
-        },
+      updateFile(id, {
+        status: FileUploadingStatusEnum.UPLOADING,
+        errorMessage: null,
+        progress: 0,
+        logs: [
+          `[upload] starting traditional upload — ${file.name} (${file.size} bytes)`,
+        ],
       });
 
-      if (!response.data?.success) {
-        throw new Error("Upload failed");
+      const abortController = new AbortController();
+      abortControllersRef.current[id] = abortController;
+
+      try {
+        const formData = new FormData();
+        formData.append("file", file, file.name);
+        formData.append("fileName", file.name);
+        formData.append("fileSize", String(file.size));
+
+        const response = await api.post("/uploads/single", formData, {
+          headers: { "Content-Type": "multipart/form-data" },
+          signal: abortController.signal,
+          onUploadProgress: (progressEvent) => {
+            if (!progressEvent.total) return;
+            const percent = Math.round(
+              (progressEvent.loaded * 100) / progressEvent.total,
+            );
+            updateFile(id, { progress: percent });
+          },
+        });
+
+        if (!response.data?.success) {
+          throw new Error("Upload failed");
+        }
+
+        appendLog(id, "[upload] complete");
+        updateFile(id, {
+          status: FileUploadingStatusEnum.COMPLETED,
+          progress: 100,
+        });
+      } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") {
+          appendLog(id, "[upload] cancelled");
+          return;
+        }
+        appendLog(id, "[upload] failed");
+        updateFile(id, {
+          status: FileUploadingStatusEnum.ERROR,
+          errorMessage: err instanceof Error ? err.message : "Unknown error",
+        });
+      } finally {
+        delete abortControllersRef.current[id];
       }
+    },
+    [updateFile, appendLog],
+  );
 
-      setLogs((prev) => [...prev, "[upload] complete"]);
-      setStatus(FileUploadingStatusEnum.COMPLETED);
-      setProgress(100);
-      setFileState(null);
-    } catch (err) {
-      if (err instanceof DOMException && err.name === "AbortError") {
-        setLogs((prev) => [...prev, "[upload] cancelled"]);
-        return;
-      }
-      setLogs((prev) => [...prev, "[upload] failed"]);
-      setStatus(FileUploadingStatusEnum.ERROR);
-      setErrorMessage(err instanceof Error ? err.message : "Unknown error");
-    }
-  };
+  // New files auto-start uploading immediately — no manual trigger needed.
+  const addFiles = useCallback(
+    (newFiles: File[]) => {
+      const items: UploadFileItem[] = newFiles.map((file) => {
+        const id = crypto.randomUUID();
+        fileMapRef.current[id] = file;
+        return {
+          id,
+          file,
+          status: FileUploadingStatusEnum.IDlE,
+          progress: 0,
+          errorMessage: null,
+          logs: [],
+        };
+      });
 
-  // No pause/resume possible — it's a single in-flight request.
-  // Cancel is the only mid-flight control available.
-  const handleCancel = () => {
-    abortControllerRef.current?.abort();
-    setFileState(null);
-    setStatus(FileUploadingStatusEnum.IDlE);
-    setProgress(0);
-    setErrorMessage(null);
-    setLogs((prev) => [...prev, "[upload] cancelled, state reset"]);
-  };
+      setFiles((prev) => [...prev, ...items]);
+      items.forEach((item) => void handleUpload(item.id));
+    },
+    [handleUpload],
+  );
 
-  // Selecting a new file also clears any leftover status/progress/logs from
-  // a previous upload, since the dropzone stays interactive after COMPLETED.
-  const handleSetFile = (newFile: File | null) => {
-    setFileState(newFile);
-    if (newFile) {
-      setStatus(FileUploadingStatusEnum.IDlE);
-      setErrorMessage(null);
-      setProgress(0);
-      setLogs([]);
-    }
-  };
+  const handleCancel = useCallback(
+    (id: string) => {
+      abortControllersRef.current[id]?.abort();
+      delete abortControllersRef.current[id];
+      updateFile(id, {
+        status: FileUploadingStatusEnum.IDlE,
+        progress: 0,
+        errorMessage: null,
+      });
+      appendLog(id, "[upload] cancelled, state reset");
+    },
+    [updateFile, appendLog],
+  );
+
+  const removeFile = useCallback((id: string) => {
+    abortControllersRef.current[id]?.abort();
+    delete abortControllersRef.current[id];
+    delete fileMapRef.current[id];
+    setFiles((prev) => prev.filter((item) => item.id !== id));
+  }, []);
 
   return {
-    file,
-    setFile: handleSetFile,
-    status,
+    files,
+    addFiles,
     handleUpload,
     handleCancel,
-    progress,
-    errorMessage,
-    logs,
+    removeFile,
   };
 };
 

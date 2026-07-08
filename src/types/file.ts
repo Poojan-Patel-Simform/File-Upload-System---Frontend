@@ -55,3 +55,12 @@ export enum FileUploadingStatusEnum {
   COMPLETED,
   ERROR,
 }
+
+export type UploadFileItem = {
+  id: string;
+  file: File;
+  status: FileUploadingStatusEnum;
+  progress: number;
+  errorMessage: string | null;
+  logs: string[];
+};
