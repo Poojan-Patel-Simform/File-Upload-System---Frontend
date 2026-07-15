@@ -3,36 +3,32 @@
 import { useCallback, useRef, useState } from "react";
 import api from "@/lib/axios";
 import { FileUploadingStatusEnum, UploadFileItem } from "@/types/file";
+import { useUploadQueue } from "@/contexts/UploadQueueContext";
 
 const useFileUploadTraditional = () => {
   const [files, setFiles] = useState<UploadFileItem[]>([]);
+  const queue = useUploadQueue();
 
   const fileMapRef = useRef<Record<string, File>>({});
+
   const abortControllersRef = useRef<Record<string, AbortController>>({});
 
   const updateFile = useCallback(
-    (
-      id: string,
-      patch:
-        | Partial<UploadFileItem>
-        | ((item: UploadFileItem) => Partial<UploadFileItem>),
-    ) => {
+    (id: string, patch: Partial<UploadFileItem>) => {
       setFiles((prev) =>
-        prev.map((item) =>
-          item.id === id
-            ? { ...item, ...(typeof patch === "function" ? patch(item) : patch) }
-            : item,
-        ),
+        prev.map((item) => (item.id === id ? { ...item, ...patch } : item)),
       );
     },
     [],
   );
 
-  const appendLog = useCallback(
-    (id: string, line: string) =>
-      updateFile(id, (item) => ({ logs: [...item.logs, line] })),
-    [updateFile],
-  );
+  const appendLog = useCallback((id: string, line: string) => {
+    setFiles((prev) =>
+      prev.map((item) =>
+        item.id === id ? { ...item, logs: [...item.logs, line] } : item,
+      ),
+    );
+  }, []);
 
   const handleUpload = useCallback(
     async (id: string) => {
@@ -79,10 +75,13 @@ const useFileUploadTraditional = () => {
           progress: 100,
         });
       } catch (err) {
-        if (err instanceof DOMException && err.name === "AbortError") {
+        const wasCancelled =
+          err instanceof DOMException && err.name === "AbortError";
+        if (wasCancelled) {
           appendLog(id, "[upload] cancelled");
           return;
         }
+
         appendLog(id, "[upload] failed");
         updateFile(id, {
           status: FileUploadingStatusEnum.ERROR,
@@ -95,48 +94,60 @@ const useFileUploadTraditional = () => {
     [updateFile, appendLog],
   );
 
-  // New files auto-start uploading immediately — no manual trigger needed.
   const addFiles = useCallback(
     (newFiles: File[]) => {
-      const items: UploadFileItem[] = newFiles.map((file) => {
+      const newItems: UploadFileItem[] = [];
+
+      for (const file of newFiles) {
         const id = crypto.randomUUID();
         fileMapRef.current[id] = file;
-        return {
+
+        newItems.push({
           id,
           file,
-          status: FileUploadingStatusEnum.IDlE,
+          status: FileUploadingStatusEnum.QUEUED,
           progress: 0,
           errorMessage: null,
           logs: [],
-        };
-      });
+        });
+      }
 
-      setFiles((prev) => [...prev, ...items]);
-      items.forEach((item) => void handleUpload(item.id));
+      setFiles((prev) => [...prev, ...newItems]);
+
+      for (const item of newItems) {
+        appendLog(item.id, "[queue] waiting for a free upload slot");
+        queue.enqueue(item.id, () => handleUpload(item.id));
+      }
     },
-    [handleUpload],
+    [handleUpload, queue, appendLog],
   );
 
   const handleCancel = useCallback(
     (id: string) => {
+      queue.cancel(id);
       abortControllersRef.current[id]?.abort();
       delete abortControllersRef.current[id];
+
       updateFile(id, {
-        status: FileUploadingStatusEnum.IDlE,
+        status: FileUploadingStatusEnum.IDLE,
         progress: 0,
         errorMessage: null,
       });
       appendLog(id, "[upload] cancelled, state reset");
     },
-    [updateFile, appendLog],
+    [updateFile, appendLog, queue],
   );
 
-  const removeFile = useCallback((id: string) => {
-    abortControllersRef.current[id]?.abort();
-    delete abortControllersRef.current[id];
-    delete fileMapRef.current[id];
-    setFiles((prev) => prev.filter((item) => item.id !== id));
-  }, []);
+  const removeFile = useCallback(
+    (id: string) => {
+      queue.cancel(id);
+      abortControllersRef.current[id]?.abort();
+      delete abortControllersRef.current[id];
+      delete fileMapRef.current[id];
+      setFiles((prev) => prev.filter((item) => item.id !== id));
+    },
+    [queue],
+  );
 
   return {
     files,

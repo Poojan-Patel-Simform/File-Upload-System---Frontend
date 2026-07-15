@@ -49,9 +49,11 @@ export type ChunkUploadResponse = {
 };
 
 export enum FileUploadingStatusEnum {
-  IDlE,
+  IDLE,
+  QUEUED,
   UPLOADING,
   PAUSED,
+  MERGING,
   COMPLETED,
   ERROR,
 }
@@ -63,4 +65,5 @@ export type UploadFileItem = {
   progress: number;
   errorMessage: string | null;
   logs: string[];
+  resumableUploadId?: string;
 };

@@ -1,11 +1,3 @@
-/**
- * Convert bytes into a human-readable file size.
- *
- * Examples:
- * formatBytes(1024) => "1 KB"
- * formatBytes(1048576) => "1 MB"
- * formatBytes(1073741824) => "1 GB"
- */
 export const formatBytes = (bytes: number, decimals: number = 2): string => {
   if (!Number.isFinite(bytes) || bytes < 0) {
     throw new Error("Bytes must be a non-negative number");

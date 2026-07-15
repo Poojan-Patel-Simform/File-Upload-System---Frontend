@@ -1,3 +1,6 @@
+"use client";
+
+import { useEffect, useMemo } from "react";
 import { formatBytes } from "@/lib/fileSize";
 import { getFileType } from "@/lib/fileType";
 import { FileType } from "@/types/file";
@@ -30,15 +33,39 @@ const FILE_TYPE_ICON: Record<FileType, typeof File> = {
 };
 
 const FileDetails = ({ file }: PropsType) => {
+  const fileType = file ? getFileType(file.name) : "unknown";
+  const canPreview = fileType === "image" || fileType === "video";
+
+  const previewUrl = useMemo(() => {
+    if (!file || !canPreview) return null;
+    return URL.createObjectURL(file);
+  }, [file, canPreview]);
+
+  useEffect(() => {
+    return () => {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+    };
+  }, [previewUrl]);
+
   if (!file) return null;
 
-  const fileType = getFileType(file.name);
   const Icon = FILE_TYPE_ICON[fileType];
 
   return (
     <div className="flex w-full items-center gap-4">
-      <div className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-linear-to-br from-primary/20 to-accent/20 text-primary">
-        <Icon className="size-6" />
+      <div className="flex size-12 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-linear-to-br from-primary/20 to-accent/20 text-primary">
+        {previewUrl && fileType === "image" && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={previewUrl}
+            alt=""
+            className="size-full object-cover"
+          />
+        )}
+        {previewUrl && fileType === "video" && (
+          <video src={previewUrl} className="size-full object-cover" muted />
+        )}
+        {!previewUrl && <Icon className="size-6" />}
       </div>
 
       <div className="flex min-w-0 flex-1 flex-col gap-1">

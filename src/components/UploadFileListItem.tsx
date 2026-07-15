@@ -4,7 +4,7 @@ import FileDetails from "@/components/FileDetails";
 import UploadProgress from "@/components/UploadProgress";
 import { Button } from "@/components/ui/button";
 import { FileUploadingStatusEnum, UploadFileItem } from "@/types/file";
-import { Pause, Play, Trash2, Upload, X } from "lucide-react";
+import { History, Pause, Play, RotateCcw, Trash2, Upload, X } from "lucide-react";
 
 type PropsType = {
   item: UploadFileItem;
@@ -13,6 +13,8 @@ type PropsType = {
   onPause?: (id: string) => void;
   onResume?: (id: string) => void;
   onRemove?: (id: string) => void;
+  onResumeDetected?: (id: string) => void;
+  onStartFresh?: (id: string) => void;
 };
 
 const UploadFileListItem = ({
@@ -22,8 +24,39 @@ const UploadFileListItem = ({
   onPause,
   onResume,
   onRemove,
+  onResumeDetected,
+  onStartFresh,
 }: PropsType) => {
-  const { id, file, status, progress, errorMessage, logs } = item;
+  const { id, file, status, progress, errorMessage, logs, resumableUploadId } =
+    item;
+
+  if (resumableUploadId && onResumeDetected && onStartFresh) {
+    return (
+      <div className="flex flex-col gap-4 rounded-2xl border border-primary/30 bg-primary/5 p-5 shadow-2xl shadow-black/20 backdrop-blur-sm">
+        <FileDetails file={file} />
+
+        <p className="flex items-center gap-2 text-sm text-muted-foreground">
+          <History className="size-4 shrink-0 text-primary" />
+          Resumable upload detected from a previous session.
+        </p>
+
+        <div className="flex items-center gap-2">
+          <Button size="sm" onClick={() => onResumeDetected(id)}>
+            <Upload />
+            Resume
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => onStartFresh(id)}
+          >
+            <RotateCcw />
+            Start Fresh
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-4 rounded-2xl border border-white/10 bg-white/3 p-5 shadow-2xl shadow-black/20 backdrop-blur-sm">
@@ -60,7 +93,7 @@ const UploadFileListItem = ({
           )}
 
           {onRemove &&
-            (status === FileUploadingStatusEnum.IDlE ||
+            (status === FileUploadingStatusEnum.IDLE ||
               status === FileUploadingStatusEnum.COMPLETED) && (
               <Button size="icon-sm" variant="ghost" onClick={() => onRemove(id)}>
                 <Trash2 />

@@ -5,22 +5,22 @@ export const getChunkSize = (fileSize: number): number => {
   const GB = 1024 * MB;
 
   if (fileSize <= 10 * MB) {
-    return 1 * MB; // <= 10MB
+    return 1 * MB;
   }
 
   if (fileSize <= 100 * MB) {
-    return 5 * MB; // 10MB - 100MB
+    return 5 * MB;
   }
 
   if (fileSize <= 1 * GB) {
-    return 10 * MB; // 100MB - 1GB
+    return 10 * MB;
   }
 
   if (fileSize <= 10 * GB) {
-    return 25 * MB; // 1GB - 10GB
+    return 25 * MB;
   }
 
-  return 50 * MB; // > 10GB
+  return 50 * MB;
 };
 
 export const generateFileChunks = (file: File): FileChunk[] => {

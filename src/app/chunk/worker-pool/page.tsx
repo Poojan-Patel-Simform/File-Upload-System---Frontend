@@ -13,6 +13,8 @@ const Home = () => {
     handleResume,
     handleCancel,
     removeFile,
+    handleResumeDetected,
+    handleStartFresh,
   } = useFileUploadChunkedWorkerPool();
 
   return (
@@ -32,6 +34,8 @@ const Home = () => {
               onResume={handleResume}
               onCancel={handleCancel}
               onRemove={removeFile}
+              onResumeDetected={handleResumeDetected}
+              onStartFresh={handleStartFresh}
             />
           ))}
         </div>

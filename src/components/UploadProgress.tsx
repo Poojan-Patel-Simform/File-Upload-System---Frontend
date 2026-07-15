@@ -7,6 +7,8 @@ import { FileUploadingStatusEnum } from "@/types/file";
 import {
   AlertTriangle,
   CheckCircle2,
+  Clock,
+  GitMerge,
   Loader2,
   PauseCircle,
 } from "lucide-react";
@@ -22,9 +24,14 @@ const STATUS_META: Record<
   FileUploadingStatusEnum,
   { label: string; icon: typeof Loader2; className: string }
 > = {
-  [FileUploadingStatusEnum.IDlE]: {
+  [FileUploadingStatusEnum.IDLE]: {
     label: "Idle",
     icon: Loader2,
+    className: "text-muted-foreground",
+  },
+  [FileUploadingStatusEnum.QUEUED]: {
+    label: "Queued",
+    icon: Clock,
     className: "text-muted-foreground",
   },
   [FileUploadingStatusEnum.UPLOADING]: {
@@ -36,6 +43,11 @@ const STATUS_META: Record<
     label: "Paused",
     icon: PauseCircle,
     className: "text-yellow-400",
+  },
+  [FileUploadingStatusEnum.MERGING]: {
+    label: "Finalizing",
+    icon: GitMerge,
+    className: "text-primary",
   },
   [FileUploadingStatusEnum.COMPLETED]: {
     label: "Completed",
@@ -55,7 +67,7 @@ const UploadProgress = ({
   errorMessage,
   logs = [],
 }: PropsType) => {
-  if (status === FileUploadingStatusEnum.IDlE) return null;
+  if (status === FileUploadingStatusEnum.IDLE) return null;
 
   const { label, icon: Icon, className } = STATUS_META[status];
 
@@ -66,7 +78,9 @@ const UploadProgress = ({
           <Icon
             className={cn(
               "size-4",
-              status === FileUploadingStatusEnum.UPLOADING && "animate-spin",
+              (status === FileUploadingStatusEnum.UPLOADING ||
+                status === FileUploadingStatusEnum.MERGING) &&
+                "animate-spin",
             )}
           />
           {label}

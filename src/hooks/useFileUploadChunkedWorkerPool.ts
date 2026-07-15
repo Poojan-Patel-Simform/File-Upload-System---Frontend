@@ -1,143 +1,154 @@
 "use client";
 
-/**
- * APPROACH 3 — Chunked upload, worker pool
- * File is split into chunks and N workers pull from a SHARED CURSOR,
- * keeping all N concurrency slots busy at all times (no batch-boundary
- * idle time like Promise.all-in-groups-of-5 would have).
- *
- * Trade-offs vs Approach 2 (sequential):
- *  - Fastest on real-world variable-latency connections
- *  - Pause is approximate — up to (CONCURRENCY - 1) chunks may already be
- *    in flight and will complete after pause is requested. Not a
- *    correctness issue (backend dedup handles it), just means the pause
- *    point isn't exact.
- *  - Requires a ref-based cursor since concurrent async closures can't
- *    safely read/write React state directly without stale-closure risk
- *
- * Each file uploading gets its own independent worker pool (keyed by file
- * id), so N files uploading concurrently means up to CONCURRENCY * N
- * in-flight chunk requests — an accepted trade-off of full concurrency.
- *
- * Backend requirement: none beyond what /uploads/init and /uploads/chunk
- * already do — the atomic uploadedChunks increment in a DB transaction on
- * the backend is what makes concurrent chunk writes safe. See the Express
- * uploadChunk handler for that logic.
- */
-
 import {
   ChunkUploadResponse,
   FileUploadingStatusEnum,
   InitUploadResponse,
   UploadFileItem,
-  UploadStatus,
 } from "@/types/file";
 import { useCallback, useRef, useState } from "react";
 import useHash from "./useHash";
+import { sha256Hex } from "@/lib/hash";
+import { withRetry } from "@/lib/retry";
+import { getNetworkHint } from "@/lib/network";
 import { generateFileChunks } from "@/lib/fileProcess";
+import { mapServerStatusToClientStatus } from "@/lib/statusMapping";
+import { useUploadQueue } from "@/contexts/UploadQueueContext";
+import {
+  clearResumableUpload,
+  getResumableUpload,
+  putResumableUpload,
+} from "@/lib/resumeStore";
 import api from "@/lib/axios";
 
-const CONCURRENCY = 5;
+const CHUNK_RETRIES = 3;
 
 type Chunks = ReturnType<typeof generateFileChunks>;
+type Chunk = Chunks[number];
 
 const useFileUploadChunkedWorkerPool = () => {
   const [files, setFiles] = useState<UploadFileItem[]>([]);
-
   const { handleGetHash } = useHash();
+  const queue = useUploadQueue();
 
   const fileMapRef = useRef<Record<string, File>>({});
+
   const abortControllersRef = useRef<Record<string, AbortController>>({});
+
   const pausedFlagsRef = useRef<Record<string, boolean>>({});
+
   const uploadStatesRef = useRef<
     Record<string, { uploadId: string; chunks: Chunks }>
   >({});
-  const chunkCountsRef = useRef<Record<string, { uploaded: number; total: number }>>(
-    {},
-  );
 
-  // Shared mutable cursor per file, read/written by that file's concurrent
-  // workers — must be a ref, not React state, since workers run inside
-  // tick-interleaved async closures and state updates are batched/async.
+  const chunkCountsRef = useRef<
+    Record<string, { uploaded: number; total: number }>
+  >({});
+
+  const fileHashCacheRef = useRef<Record<string, string>>({});
+
+  const resumeContextRef = useRef<
+    Record<string, { fileHash: string; fileName: string; fileSize: number; uploadId: string }>
+  >({});
+
   const cursorsRef = useRef<Record<string, number>>({});
 
   const updateFile = useCallback(
-    (
-      id: string,
-      patch:
-        | Partial<UploadFileItem>
-        | ((item: UploadFileItem) => Partial<UploadFileItem>),
-    ) => {
+    (id: string, patch: Partial<UploadFileItem>) => {
       setFiles((prev) =>
-        prev.map((item) =>
-          item.id === id
-            ? { ...item, ...(typeof patch === "function" ? patch(item) : patch) }
-            : item,
-        ),
+        prev.map((item) => (item.id === id ? { ...item, ...patch } : item)),
       );
     },
     [],
   );
 
-  const appendLog = useCallback(
-    (id: string, line: string) =>
-      updateFile(id, (item) => ({ logs: [...item.logs, line] })),
-    [updateFile],
-  );
+  const appendLog = useCallback((id: string, line: string) => {
+    setFiles((prev) =>
+      prev.map((item) =>
+        item.id === id ? { ...item, logs: [...item.logs, line] } : item,
+      ),
+    );
+  }, []);
 
   const setChunkProgress = useCallback(
     (id: string, uploaded: number) => {
       const counts = chunkCountsRef.current[id];
       if (!counts) return;
+
       counts.uploaded = uploaded;
       const percent =
         counts.total > 0 ? Math.round((uploaded / counts.total) * 100) : 0;
       updateFile(id, { progress: percent });
+
+      const ctx = resumeContextRef.current[id];
+      if (ctx) {
+        putResumableUpload({
+          fileHash: ctx.fileHash,
+          fileName: ctx.fileName,
+          fileSize: ctx.fileSize,
+          uploadId: ctx.uploadId,
+          totalChunks: counts.total,
+          uploadedChunks: uploaded,
+          strategy: "worker-pool",
+          updatedAt: Date.now(),
+        });
+      }
     },
     [updateFile],
   );
 
-  const runUploadPool = useCallback(
+  const sendChunk = useCallback(
+    async (
+      chunk: Chunk,
+      uploadId: string,
+      signal: AbortSignal,
+      onRetry: (attempt: number, delayMs: number) => void,
+    ) => {
+      const checksum = await sha256Hex(chunk.chunk);
+
+      await withRetry(
+        async () => {
+          const formData = new FormData();
+          formData.append("uploadId", uploadId);
+          formData.append("chunkIndex", String(chunk.index));
+          formData.append("checksum", checksum);
+          formData.append("file", chunk.chunk);
+
+          const response = await api.post("/uploads/chunk", formData, {
+            headers: { "Content-Type": "multipart/form-data" },
+            signal,
+          });
+
+          const chunkData: ChunkUploadResponse = response.data;
+          if (!chunkData.success) {
+            throw new Error(`Failed to upload chunk ${chunk.index}`);
+          }
+        },
+        { retries: CHUNK_RETRIES, onRetry },
+      );
+    },
+    [],
+  );
+
+  const sendChunksInWorkerPool = useCallback(
     async (
       id: string,
       uploadId: string,
       chunks: Chunks,
       startCount: number,
-      chunkLength: number,
+      totalChunks: number,
     ) => {
       const abortController = new AbortController();
       abortControllersRef.current[id] = abortController;
-
+      chunkCountsRef.current[id] = { uploaded: startCount, total: totalChunks };
       cursorsRef.current[id] = 0;
-      chunkCountsRef.current[id] = { uploaded: startCount, total: chunkLength };
 
-      // Boxed in an object rather than a bare `let` — TS's control-flow
-      // analysis doesn't widen a closure-mutated `let` back to its declared
-      // type at the read site below, so `firstError.message` would otherwise
-      // type-check as `never`.
+      const concurrency = getNetworkHint().concurrency;
+
       const errorState: { firstError: Error | null } = { firstError: null };
       let wasPaused = false;
+      let uploadedCount = startCount;
 
-      const uploadOne = async (chunk: Chunks[number]) => {
-        const formData = new FormData();
-        formData.append("uploadId", uploadId);
-        formData.append("chunkIndex", String(chunk.index));
-        formData.append("file", chunk.chunk);
-
-        const response = await api.post("/uploads/chunk", formData, {
-          headers: { "Content-Type": "multipart/form-data" },
-          signal: abortController.signal,
-        });
-
-        const chunkData: ChunkUploadResponse = response.data;
-        if (!chunkData.success) {
-          throw new Error(`Failed to upload chunk ${chunk.index}`);
-        }
-      };
-
-      // Each worker pulls the next chunk off this file's shared cursor
-      // until the queue empties, pause is requested, or an error/abort
-      // stops everything.
       const worker = async () => {
         while (cursorsRef.current[id] < chunks.length) {
           if (errorState.firstError || wasPaused) return;
@@ -149,32 +160,45 @@ const useFileUploadChunkedWorkerPool = () => {
 
           const chunk = chunks[cursorsRef.current[id]++];
 
-          try {
-            await uploadOne(chunk);
+          if (cursorsRef.current[id] >= chunks.length) {
+            updateFile(id, { status: FileUploadingStatusEnum.MERGING });
+            appendLog(id, "[upload] last chunk claimed — server will finalize (merge + verify) shortly...");
+          }
 
-            const counts = chunkCountsRef.current[id];
-            const uploaded = (counts?.uploaded ?? 0) + 1;
-            setChunkProgress(id, uploaded);
+          try {
+            await sendChunk(chunk, uploadId, abortController.signal, (attempt, delayMs) =>
+              appendLog(
+                id,
+                `[upload] chunk ${chunk.index} failed (attempt ${attempt}/${CHUNK_RETRIES}), retrying in ${Math.round(delayMs)}ms`,
+              ),
+            );
+
+            uploadedCount++;
+            setChunkProgress(id, uploadedCount);
             appendLog(
               id,
-              `[upload] chunk ${chunk.index} uploaded (${uploaded}/${chunkLength})`,
+              `[upload] chunk ${chunk.index} uploaded (${uploadedCount}/${totalChunks})`,
             );
           } catch (err) {
-            if (err instanceof DOMException && err.name === "AbortError") {
-              return; // cancel already resets state via handleCancel
-            }
+            const wasCancelled =
+              err instanceof DOMException && err.name === "AbortError";
+            if (wasCancelled) return;
+
             errorState.firstError =
               err instanceof Error ? err : new Error("Unknown upload error");
-            appendLog(id, `[upload] chunk ${chunk.index} failed`);
+            appendLog(
+              id,
+              `[upload] chunk ${chunk.index} failed permanently after ${CHUNK_RETRIES} retries`,
+            );
             return;
           }
         }
       };
 
-      const workers = Array.from({ length: CONCURRENCY }, () => worker());
+      const workers = Array.from({ length: concurrency }, () => worker());
       await Promise.all(workers);
 
-      if (abortController.signal.aborted) return; // handleCancel already reset state
+      if (abortController.signal.aborted) return;
 
       if (errorState.firstError) {
         updateFile(id, {
@@ -184,25 +208,29 @@ const useFileUploadChunkedWorkerPool = () => {
         return;
       }
 
-      const uploadedCount = chunkCountsRef.current[id]?.uploaded ?? 0;
-
       if (wasPaused || pausedFlagsRef.current[id]) {
-        // Chunks before the cursor are dispatched (some may still be in
-        // flight from other workers), so slicing from the cursor is a safe,
-        // possibly slightly conservative resume point.
         const remaining = chunks.slice(cursorsRef.current[id]);
         uploadStatesRef.current[id] = { uploadId, chunks: remaining };
-
-        appendLog(id, `[upload] paused (${uploadedCount}/${chunkLength} done)`);
+        appendLog(id, `[upload] paused (${uploadedCount}/${totalChunks} done)`);
         updateFile(id, { status: FileUploadingStatusEnum.PAUSED });
         return;
       }
 
-      appendLog(id, `[upload] complete — ${uploadedCount}/${chunkLength} chunks`);
-      updateFile(id, { status: FileUploadingStatusEnum.COMPLETED, progress: 100 });
+      appendLog(
+        id,
+        `[upload] complete — ${uploadedCount}/${totalChunks} chunks`,
+      );
+      updateFile(id, {
+        status: FileUploadingStatusEnum.COMPLETED,
+        progress: 100,
+      });
       delete uploadStatesRef.current[id];
+
+      const ctx = resumeContextRef.current[id];
+      if (ctx) clearResumableUpload(ctx.fileHash);
+      delete resumeContextRef.current[id];
     },
-    [appendLog, updateFile, setChunkProgress],
+    [sendChunk, appendLog, updateFile, setChunkProgress],
   );
 
   const handleUpload = useCallback(
@@ -218,7 +246,14 @@ const useFileUploadChunkedWorkerPool = () => {
 
       try {
         const chunks = generateFileChunks(file);
-        const fileHash = await handleGetHash(file);
+
+        let fileHash = fileHashCacheRef.current[id];
+        if (!fileHash) {
+          appendLog(id, "[hash] computing file hash (SHA-256) for dedup/integrity check...");
+          fileHash = await handleGetHash(file);
+          appendLog(id, "[hash] done");
+          fileHashCacheRef.current[id] = fileHash;
+        }
 
         const response = await api.post("/uploads/init", {
           fileHash,
@@ -237,15 +272,26 @@ const useFileUploadChunkedWorkerPool = () => {
         } = initData.data;
         chunkCountsRef.current[id] = { uploaded: 0, total: chunks.length };
 
-        if (initStatus === UploadStatus.COMPLETED) {
+        if (
+          mapServerStatusToClientStatus(initStatus) ===
+          FileUploadingStatusEnum.COMPLETED
+        ) {
           appendLog(id, "[upload] file already uploaded, deduplicated");
           setChunkProgress(id, chunks.length);
           updateFile(id, {
             status: FileUploadingStatusEnum.COMPLETED,
             progress: 100,
           });
+          clearResumableUpload(fileHash);
           return;
         }
+
+        resumeContextRef.current[id] = {
+          fileHash,
+          fileName: file.name,
+          fileSize: file.size,
+          uploadId,
+        };
 
         const alreadyUploaded = new Set(uploadedChunks);
         const remaining = chunks.filter((c) => !alreadyUploaded.has(c.index));
@@ -257,7 +303,7 @@ const useFileUploadChunkedWorkerPool = () => {
         );
 
         uploadStatesRef.current[id] = { uploadId, chunks: remaining };
-        await runUploadPool(
+        await sendChunksInWorkerPool(
           id,
           uploadId,
           remaining,
@@ -272,29 +318,92 @@ const useFileUploadChunkedWorkerPool = () => {
         });
       }
     },
-    [handleGetHash, appendLog, updateFile, setChunkProgress, runUploadPool],
+    [handleGetHash, appendLog, updateFile, setChunkProgress, sendChunksInWorkerPool],
   );
 
-  // New files auto-start uploading immediately — no manual trigger needed.
+  const enqueueUpload = useCallback(
+    (id: string) => {
+      updateFile(id, {
+        status: FileUploadingStatusEnum.QUEUED,
+        resumableUploadId: undefined,
+      });
+      appendLog(id, "[queue] waiting for a free upload slot");
+      queue.enqueue(id, () => handleUpload(id));
+    },
+    [handleUpload, queue, appendLog, updateFile],
+  );
+
   const addFiles = useCallback(
     (newFiles: File[]) => {
-      const items: UploadFileItem[] = newFiles.map((file) => {
+      const newItems: UploadFileItem[] = [];
+
+      for (const file of newFiles) {
         const id = crypto.randomUUID();
         fileMapRef.current[id] = file;
-        return {
+
+        newItems.push({
           id,
           file,
-          status: FileUploadingStatusEnum.IDlE,
+          status: FileUploadingStatusEnum.IDLE,
           progress: 0,
           errorMessage: null,
           logs: [],
-        };
-      });
+        });
+      }
 
-      setFiles((prev) => [...prev, ...items]);
-      items.forEach((item) => void handleUpload(item.id));
+      setFiles((prev) => [...prev, ...newItems]);
+
+      for (const item of newItems) {
+        void (async () => {
+          const fileHash = await handleGetHash(item.file);
+          fileHashCacheRef.current[item.id] = fileHash;
+
+          const record = getResumableUpload(fileHash);
+          if (record && record.uploadedChunks < record.totalChunks) {
+            updateFile(item.id, { resumableUploadId: record.uploadId });
+            appendLog(
+              item.id,
+              `[resume] resumable upload detected — ${record.uploadedChunks}/${record.totalChunks} chunks already uploaded previously`,
+            );
+            return;
+          }
+
+          enqueueUpload(item.id);
+        })();
+      }
     },
-    [handleUpload],
+    [handleGetHash, appendLog, updateFile, enqueueUpload],
+  );
+
+  const handleResumeDetected = useCallback(
+    (id: string) => {
+      appendLog(id, "[resume] resuming previous upload");
+      enqueueUpload(id);
+    },
+    [enqueueUpload, appendLog],
+  );
+
+  const handleStartFresh = useCallback(
+    async (id: string) => {
+      const fileHash = fileHashCacheRef.current[id];
+      const record = fileHash ? getResumableUpload(fileHash) : null;
+
+      if (record) {
+        try {
+          await api.delete(`/uploads/${record.uploadId}`);
+          appendLog(id, "[resume] aborted previous upload on the server");
+        } catch {
+          appendLog(
+            id,
+            "[resume] could not abort previous upload on the server, continuing anyway",
+          );
+        }
+        clearResumableUpload(record.fileHash);
+      }
+
+      enqueueUpload(id);
+    },
+    [enqueueUpload, appendLog],
   );
 
   const handlePause = useCallback(
@@ -305,7 +414,6 @@ const useFileUploadChunkedWorkerPool = () => {
     [appendLog],
   );
 
-  // Resumes directly from uploadStatesRef — no re-hash, no re-init call.
   const handleResume = useCallback(
     async (id: string) => {
       const uploadState = uploadStatesRef.current[id];
@@ -317,7 +425,7 @@ const useFileUploadChunkedWorkerPool = () => {
 
       const counts = chunkCountsRef.current[id];
       const { uploadId, chunks } = uploadState;
-      await runUploadPool(
+      await sendChunksInWorkerPool(
         id,
         uploadId,
         chunks,
@@ -325,37 +433,49 @@ const useFileUploadChunkedWorkerPool = () => {
         counts?.total ?? 0,
       );
     },
-    [updateFile, appendLog, runUploadPool],
+    [updateFile, appendLog, sendChunksInWorkerPool],
   );
 
   const handleCancel = useCallback(
     (id: string) => {
+      queue.cancel(id);
       abortControllersRef.current[id]?.abort();
       delete abortControllersRef.current[id];
       pausedFlagsRef.current[id] = false;
       delete uploadStatesRef.current[id];
       delete chunkCountsRef.current[id];
       delete cursorsRef.current[id];
+
       updateFile(id, {
-        status: FileUploadingStatusEnum.IDlE,
+        status: FileUploadingStatusEnum.IDLE,
         progress: 0,
         errorMessage: null,
       });
       appendLog(id, "[upload] cancelled, state reset");
     },
-    [updateFile, appendLog],
+    [updateFile, appendLog, queue],
   );
 
-  const removeFile = useCallback((id: string) => {
-    abortControllersRef.current[id]?.abort();
-    delete abortControllersRef.current[id];
-    delete pausedFlagsRef.current[id];
-    delete uploadStatesRef.current[id];
-    delete chunkCountsRef.current[id];
-    delete cursorsRef.current[id];
-    delete fileMapRef.current[id];
-    setFiles((prev) => prev.filter((item) => item.id !== id));
-  }, []);
+  const removeFile = useCallback(
+    (id: string) => {
+      queue.cancel(id);
+      abortControllersRef.current[id]?.abort();
+      delete abortControllersRef.current[id];
+      delete pausedFlagsRef.current[id];
+      delete uploadStatesRef.current[id];
+      delete chunkCountsRef.current[id];
+      delete cursorsRef.current[id];
+      delete fileMapRef.current[id];
+
+      const ctx = resumeContextRef.current[id];
+      if (ctx) clearResumableUpload(ctx.fileHash);
+      delete resumeContextRef.current[id];
+      delete fileHashCacheRef.current[id];
+
+      setFiles((prev) => prev.filter((item) => item.id !== id));
+    },
+    [queue],
+  );
 
   return {
     files,
@@ -365,6 +485,8 @@ const useFileUploadChunkedWorkerPool = () => {
     handleResume,
     handleCancel,
     removeFile,
+    handleResumeDetected,
+    handleStartFresh,
   };
 };
 
