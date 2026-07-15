@@ -17,6 +17,9 @@ export const getNetworkHint = (): NetworkHint => {
     navigator as Navigator & { connection?: NetworkInformationLike }
   ).connection;
 
+  // Concurrency tiers keyed to connection quality, so the worker-pool upload
+  // strategy doesn't open more parallel chunk requests than a slow
+  // connection can actually service.
   switch (connection?.effectiveType) {
     case "slow-2g":
     case "2g":

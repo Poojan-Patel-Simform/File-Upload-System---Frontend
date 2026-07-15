@@ -5,6 +5,11 @@ export type UploadQueue = {
   cancel: (id: string) => void;
 };
 
+// Closure-based concurrency queue: `active` + `pending` together implement a
+// file-level worker pool (the same claim-a-slot pattern the chunk-level
+// worker pool uses via cursorsRef, but here gating whole-file uploads instead
+// of individual chunks). runNext recurses on task completion to backfill the
+// freed slot from the FIFO `pending` array.
 export const createUploadQueue = (maxConcurrent: number): UploadQueue => {
   let active = 0;
   const pending: Array<{ id: string; task: QueueTask }> = [];

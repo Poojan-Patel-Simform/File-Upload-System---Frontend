@@ -4,6 +4,9 @@ import Dropzone from "@/components/Dropzone";
 import UploadFileListItem from "@/components/UploadFileListItem";
 import useFileUploadChunkedWorkerPool from "@/hooks/useFileUploadChunkedWorkerPool";
 
+// Thin container: all upload state/logic lives in
+// useFileUploadChunkedWorkerPool, this page just wires its output to
+// Dropzone/UploadFileListItem.
 const Home = () => {
   const {
     files,

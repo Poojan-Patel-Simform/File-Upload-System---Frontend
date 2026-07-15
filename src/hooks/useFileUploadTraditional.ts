@@ -5,12 +5,30 @@ import api from "@/lib/axios";
 import { FileUploadingStatusEnum, UploadFileItem } from "@/types/file";
 import { useUploadQueue } from "@/contexts/UploadQueueContext";
 
+/**
+ * Traditional (single-shot) file upload hook.
+ *
+ * Posts the whole file as one FormData request and tracks progress via axios
+ * upload-progress events. No chunking, hashing, or resumable-upload support —
+ * the simplest of the three upload strategies.
+ *
+ * @returns files - current upload items with status/progress/logs
+ * @returns addFiles - add new File objects and enqueue them for upload
+ * @returns handleUpload - start uploading a queued file
+ * @returns handleCancel - abort and hard-reset a file back to IDLE
+ * @returns removeFile - cancel and drop a file from the list entirely
+ */
 const useFileUploadTraditional = () => {
   const [files, setFiles] = useState<UploadFileItem[]>([]);
   const queue = useUploadQueue();
 
+  // Raw File objects keyed by id — kept in a ref instead of state since File
+  // instances aren't meant to trigger re-renders and only need to be read back
+  // by id when an upload starts.
   const fileMapRef = useRef<Record<string, File>>({});
 
+  // Per-id AbortController so handleCancel/removeFile can abort an in-flight
+  // request without waiting for a re-render.
   const abortControllersRef = useRef<Record<string, AbortController>>({});
 
   const updateFile = useCallback(
@@ -30,6 +48,10 @@ const useFileUploadTraditional = () => {
     );
   }, []);
 
+  // Status state machine (FileUploadingStatusEnum):
+  //   IDLE -> QUEUED (addFiles) -> UPLOADING (this function)
+  //   UPLOADING -> COMPLETED | ERROR (this function, on request settle)
+  //   any -> IDLE (handleCancel, forced hard reset)
   const handleUpload = useCallback(
     async (id: string) => {
       const file = fileMapRef.current[id];

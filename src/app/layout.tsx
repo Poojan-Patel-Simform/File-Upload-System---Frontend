@@ -47,6 +47,8 @@ export default function RootLayout({
       )}
     >
       <body className="flex min-h-screen flex-col gap-8 pb-16">
+        {/* One shared concurrency queue across all three strategy pages, so
+            navigating between them doesn't reset the in-flight upload limit. */}
         <UploadQueueProvider>
           <Navbar />
           <div className="mx-auto flex w-full max-w-7xl flex-col gap-8">

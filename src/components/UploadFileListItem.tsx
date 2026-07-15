@@ -6,6 +6,10 @@ import { Button } from "@/components/ui/button";
 import { FileUploadingStatusEnum, UploadFileItem } from "@/types/file";
 import { History, Pause, Play, RotateCcw, Trash2, Upload, X } from "lucide-react";
 
+// The optional callbacks below gate their corresponding button's visibility
+// directly (composition over boolean props) — a page opts in/out of
+// pause/resume/remove/resume-detection UI simply by omitting the prop,
+// rather than passing separate showPause/showResume/etc. booleans.
 type PropsType = {
   item: UploadFileItem;
   onCancel: (id: string) => void;
@@ -30,6 +34,9 @@ const UploadFileListItem = ({
   const { id, file, status, progress, errorMessage, logs, resumableUploadId } =
     item;
 
+  // Both onResumeDetected and onStartFresh must be provided for this branch
+  // to trigger — if either is missing, a resumableUploadId is silently
+  // ignored and the normal card below renders instead.
   if (resumableUploadId && onResumeDetected && onStartFresh) {
     return (
       <div className="flex flex-col gap-4 rounded-2xl border border-primary/30 bg-primary/5 p-5 shadow-2xl shadow-black/20 backdrop-blur-sm">
@@ -63,6 +70,8 @@ const UploadFileListItem = ({
       <div className="flex items-center justify-between gap-4">
         <FileDetails file={file} />
 
+        {/* Multi-branch on status — more than one button can render at once,
+            e.g. UPLOADING shows Pause + Cancel together. */}
         <div className="flex shrink-0 items-center gap-2">
           {status === FileUploadingStatusEnum.ERROR && (
             <Button size="sm" onClick={() => onRetry(id)}>

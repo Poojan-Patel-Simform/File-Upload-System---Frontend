@@ -8,6 +8,9 @@ const DEFAULT_MAX_CONCURRENT_FILES = 2;
 const UploadQueueContext = createContext<UploadQueue | null>(null);
 
 export const UploadQueueProvider = ({ children }: { children: ReactNode }) => {
+  // Lazy initializer so createUploadQueue runs once on mount, not on every
+  // render — the queue's internal active/pending state must stay a single
+  // instance for the lifetime of the provider.
   const [queue] = useState<UploadQueue>(() =>
     createUploadQueue(DEFAULT_MAX_CONCURRENT_FILES),
   );
@@ -19,6 +22,12 @@ export const UploadQueueProvider = ({ children }: { children: ReactNode }) => {
   );
 };
 
+/**
+ * Accesses the shared upload concurrency queue.
+ *
+ * @returns the UploadQueue instance from the nearest UploadQueueProvider
+ * @throws if called outside an UploadQueueProvider
+ */
 export const useUploadQueue = (): UploadQueue => {
   const queue = useContext(UploadQueueContext);
   if (!queue) {

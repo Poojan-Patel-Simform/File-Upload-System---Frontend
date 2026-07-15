@@ -29,6 +29,8 @@ const Dropzone = ({
     [onAddFiles],
   );
 
+  // isDragActive/fileRejections are local drag-interaction state, not upload
+  // state — this component stays presentational despite calling a hook.
   const { getRootProps, getInputProps, isDragActive, fileRejections } =
     useDropzone({
       onDrop,
@@ -79,6 +81,7 @@ const Dropzone = ({
         </div>
       </div>
 
+      {/* Singular/plural summary line, then one entry per rejected file. */}
       {fileRejections.length > 0 && (
         <div className="flex flex-col gap-2 rounded-xl border border-destructive/30 bg-destructive/10 p-4 text-sm">
           <p className="flex items-center gap-2 font-medium text-destructive">

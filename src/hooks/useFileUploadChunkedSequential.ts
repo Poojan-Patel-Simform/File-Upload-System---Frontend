@@ -25,27 +25,60 @@ const CHUNK_RETRIES = 3;
 type Chunks = ReturnType<typeof generateFileChunks>;
 type Chunk = Chunks[number];
 
+/**
+ * Chunked, sequential-strategy file upload hook.
+ *
+ * Splits each file into chunks, hashes it (SHA-256) for dedup/integrity, sends
+ * chunks to the server one at a time with per-chunk retry, and supports
+ * pause/resume plus resuming an upload left over from a previous session.
+ *
+ * @returns files - current upload items with status/progress/logs
+ * @returns addFiles - add new File objects and kick off hashing + resume detection
+ * @returns handleUpload - start (or restart) uploading a queued file
+ * @returns handlePause - request a pause at the next chunk boundary
+ * @returns handleResume - continue a paused upload from its saved chunk snapshot
+ * @returns handleCancel - abort and hard-reset a file back to IDLE
+ * @returns removeFile - cancel and drop a file from the list entirely
+ * @returns handleResumeDetected - resume an upload found in resumeStore from a previous session
+ * @returns handleStartFresh - discard a previous session's upload and start over
+ */
 const useFileUploadChunkedSequential = () => {
   const [files, setFiles] = useState<UploadFileItem[]>([]);
   const { handleGetHash } = useHash();
   const queue = useUploadQueue();
 
+  // Raw File objects keyed by id — kept in a ref instead of state since File
+  // instances aren't meant to trigger re-renders and only need to be read back
+  // by id when an upload starts.
   const fileMapRef = useRef<Record<string, File>>({});
 
+  // Per-id AbortController so handleCancel/removeFile can abort an in-flight
+  // request without waiting for a re-render.
   const abortControllersRef = useRef<Record<string, AbortController>>({});
 
+  // Mutable pause flag checked on every iteration of the synchronous chunk
+  // loop — must be a ref because state updates are async and the loop needs
+  // to see a pause request immediately, not after the next render.
   const pausedFlagsRef = useRef<Record<string, boolean>>({});
 
+  // Snapshot of the uploadId + remaining chunks at the moment of pause/cancel,
+  // so handleResume can pick up exactly where the loop left off.
   const uploadStatesRef = useRef<
     Record<string, { uploadId: string; chunks: Chunks }>
   >({});
 
+  // Running uploaded/total chunk counts, used both to compute progress % and
+  // to persist resumable-upload progress to localStorage as chunks land.
   const chunkCountsRef = useRef<
     Record<string, { uploaded: number; total: number }>
   >({});
 
+  // Caches the computed file hash per id so it isn't recomputed on resume/retry.
   const fileHashCacheRef = useRef<Record<string, string>>({});
 
+  // Context needed to read/write/clear the resumeStore entry as progress
+  // changes — kept alongside chunkCountsRef rather than in component state
+  // since it's write-only bookkeeping, never rendered.
   const resumeContextRef = useRef<
     Record<
       string,
@@ -130,6 +163,16 @@ const useFileUploadChunkedSequential = () => {
     [],
   );
 
+  // Status state machine (FileUploadingStatusEnum), driven by this loop and
+  // its callers rather than a reducer:
+  //   IDLE -> QUEUED       (enqueueUpload)
+  //   QUEUED -> UPLOADING  (handleUpload)
+  //   UPLOADING -> PAUSED  (this loop, when pausedFlagsRef is set mid-chunk)
+  //   UPLOADING -> MERGING (this loop, once the final chunk is about to send)
+  //   MERGING/UPLOADING -> COMPLETED (this loop, all chunks acknowledged)
+  //   UPLOADING -> ERROR   (this loop, chunk fails after CHUNK_RETRIES)
+  //   any -> IDLE          (handleCancel, forced hard reset)
+  // handleResume re-enters this same loop from the uploadStatesRef snapshot.
   const sendChunksSequentially = useCallback(
     async (
       id: string,

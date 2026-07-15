@@ -20,6 +20,8 @@ type PropsType = {
   logs?: string[];
 };
 
+// Status -> visual dispatch table, used instead of inline branching so each
+// status's label/icon/color lives in one place.
 const STATUS_META: Record<
   FileUploadingStatusEnum,
   { label: string; icon: typeof Loader2; className: string }
@@ -75,6 +77,8 @@ const UploadProgress = ({
     <div className="flex flex-col gap-3 rounded-2xl border border-white/10 bg-white/3 p-5">
       <div className="flex items-center justify-between text-sm">
         <span className={cn("flex items-center gap-2 font-medium", className)}>
+          {/* UPLOADING and MERGING intentionally share the spin treatment —
+              both represent server-side work still in progress. */}
           <Icon
             className={cn(
               "size-4",

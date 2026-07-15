@@ -5,6 +5,8 @@ import UploadFileListItem from "@/components/UploadFileListItem";
 
 import useFileUploadTraditional from "@/hooks/useFileUploadTraditional";
 
+// Thin container: all upload state/logic lives in useFileUploadTraditional,
+// this page just wires its output to Dropzone/UploadFileListItem.
 const Home = () => {
   const { files, addFiles, handleUpload, handleCancel, removeFile } =
     useFileUploadTraditional();

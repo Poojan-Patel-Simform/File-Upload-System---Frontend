@@ -41,6 +41,8 @@ const FileDetails = ({ file }: PropsType) => {
     return URL.createObjectURL(file);
   }, [file, canPreview]);
 
+  // Revokes the previous object URL whenever previewUrl changes (new file, or
+  // canPreview toggling) and on unmount, so blob URLs don't leak memory.
   useEffect(() => {
     return () => {
       if (previewUrl) URL.revokeObjectURL(previewUrl);
@@ -54,6 +56,8 @@ const FileDetails = ({ file }: PropsType) => {
   return (
     <div className="flex w-full items-center gap-4">
       <div className="flex size-12 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-linear-to-br from-primary/20 to-accent/20 text-primary">
+        {/* Image/video get a live preview; every other type falls back to a
+            type-keyed icon from FILE_TYPE_ICON. */}
         {previewUrl && fileType === "image" && (
           // eslint-disable-next-line @next/next/no-img-element
           <img

@@ -1,5 +1,8 @@
 import { FileUploadingStatusEnum, UploadStatus } from "@/types/file";
 
+// The server has no concept of PAUSED (pause/resume is purely a client-side
+// chunk-loop state), so this is the single point where server UploadStatus
+// values get translated into the richer client FileUploadingStatusEnum.
 export const mapServerStatusToClientStatus = (
   status: UploadStatus | string,
 ): FileUploadingStatusEnum => {

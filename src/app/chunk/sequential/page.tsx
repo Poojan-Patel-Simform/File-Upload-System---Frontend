@@ -4,6 +4,9 @@ import Dropzone from "@/components/Dropzone";
 import UploadFileListItem from "@/components/UploadFileListItem";
 import useFileUploadChunkedSequential from "@/hooks/useFileUploadChunkedSequential";
 
+// Thin container: all upload state/logic lives in
+// useFileUploadChunkedSequential, this page just wires its output to
+// Dropzone/UploadFileListItem.
 const Home = () => {
   const {
     files,

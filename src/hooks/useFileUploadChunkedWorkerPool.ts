@@ -26,31 +26,68 @@ const CHUNK_RETRIES = 3;
 type Chunks = ReturnType<typeof generateFileChunks>;
 type Chunk = Chunks[number];
 
+/**
+ * Chunked, worker-pool-strategy file upload hook.
+ *
+ * Splits each file into chunks, hashes it (SHA-256) for dedup/integrity, and
+ * uploads chunks concurrently via a small in-memory worker pool sized to the
+ * detected connection quality. Supports pause/resume plus resuming an upload
+ * left over from a previous session, same as the sequential strategy.
+ *
+ * @returns files - current upload items with status/progress/logs
+ * @returns addFiles - add new File objects and kick off hashing + resume detection
+ * @returns handleUpload - start (or restart) uploading a queued file
+ * @returns handlePause - request a pause; takes effect once in-flight workers finish
+ * @returns handleResume - continue a paused upload from its saved chunk snapshot
+ * @returns handleCancel - abort and hard-reset a file back to IDLE
+ * @returns removeFile - cancel and drop a file from the list entirely
+ * @returns handleResumeDetected - resume an upload found in resumeStore from a previous session
+ * @returns handleStartFresh - discard a previous session's upload and start over
+ */
 const useFileUploadChunkedWorkerPool = () => {
   const [files, setFiles] = useState<UploadFileItem[]>([]);
   const { handleGetHash } = useHash();
   const queue = useUploadQueue();
 
+  // Raw File objects keyed by id — kept in a ref instead of state since File
+  // instances aren't meant to trigger re-renders and only need to be read back
+  // by id when an upload starts.
   const fileMapRef = useRef<Record<string, File>>({});
 
+  // Per-id AbortController so handleCancel/removeFile can abort an in-flight
+  // request without waiting for a re-render.
   const abortControllersRef = useRef<Record<string, AbortController>>({});
 
+  // Mutable pause flag checked by every concurrent worker loop — must be a
+  // ref because state updates are async and workers need to see a pause
+  // request immediately, not after the next render.
   const pausedFlagsRef = useRef<Record<string, boolean>>({});
 
+  // Snapshot of the uploadId + remaining chunks at the moment of pause/cancel,
+  // so handleResume can pick up exactly where the workers left off.
   const uploadStatesRef = useRef<
     Record<string, { uploadId: string; chunks: Chunks }>
   >({});
 
+  // Running uploaded/total chunk counts, used both to compute progress % and
+  // to persist resumable-upload progress to localStorage as chunks land.
   const chunkCountsRef = useRef<
     Record<string, { uploaded: number; total: number }>
   >({});
 
+  // Caches the computed file hash per id so it isn't recomputed on resume/retry.
   const fileHashCacheRef = useRef<Record<string, string>>({});
 
+  // Context needed to read/write/clear the resumeStore entry as progress
+  // changes — kept alongside chunkCountsRef rather than in component state
+  // since it's write-only bookkeeping, never rendered.
   const resumeContextRef = useRef<
     Record<string, { fileHash: string; fileName: string; fileSize: number; uploadId: string }>
   >({});
 
+  // Shared "next chunk index" cursor per file id. Concurrent worker() loops
+  // read-and-increment it synchronously (single-threaded JS), so each chunk
+  // is claimed by exactly one worker without needing an explicit lock.
   const cursorsRef = useRef<Record<string, number>>({});
 
   const updateFile = useCallback(
@@ -130,6 +167,19 @@ const useFileUploadChunkedWorkerPool = () => {
     [],
   );
 
+  // Status state machine (FileUploadingStatusEnum), driven by this function
+  // and its callers rather than a reducer:
+  //   IDLE -> QUEUED       (enqueueUpload)
+  //   QUEUED -> UPLOADING  (handleUpload)
+  //   UPLOADING -> MERGING (a worker, once the final chunk index is claimed)
+  //   UPLOADING -> ERROR   (a worker, chunk fails after CHUNK_RETRIES)
+  //   UPLOADING -> PAUSED  (post-Promise.all, if any worker saw pausedFlagsRef)
+  //   UPLOADING -> COMPLETED (post-Promise.all, no error/pause/abort)
+  //   any -> IDLE          (handleCancel, forced hard reset)
+  // The post-Promise.all checks are ordered abort -> error -> paused ->
+  // completed: with several workers racing, more than one condition can be
+  // true at once, and this order picks the most "terminal" outcome first.
+  // handleResume re-enters this same function from the uploadStatesRef snapshot.
   const sendChunksInWorkerPool = useCallback(
     async (
       id: string,
@@ -143,6 +193,9 @@ const useFileUploadChunkedWorkerPool = () => {
       chunkCountsRef.current[id] = { uploaded: startCount, total: totalChunks };
       cursorsRef.current[id] = 0;
 
+      // Pool size is tuned to connection quality (2/3/5 concurrent chunk
+      // requests) so a slow connection doesn't open more parallel uploads
+      // than it can actually service.
       const concurrency = getNetworkHint().concurrency;
 
       const errorState: { firstError: Error | null } = { firstError: null };
@@ -158,6 +211,8 @@ const useFileUploadChunkedWorkerPool = () => {
             return;
           }
 
+          // Synchronous read-then-increment claims this chunk index for the
+          // current worker before any other worker's turn on the event loop.
           const chunk = chunks[cursorsRef.current[id]++];
 
           if (cursorsRef.current[id] >= chunks.length) {
