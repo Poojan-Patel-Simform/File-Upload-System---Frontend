@@ -1,9 +1,9 @@
-export type RetryOptions = {
-  retries?: number;
-  baseDelayMs?: number;
-  maxDelayMs?: number;
-  onRetry?: (attempt: number, delayMs: number, error: unknown) => void;
-};
+import { RetryOptions } from "@/types/retry";
+import {
+  DEFAULT_RETRIES,
+  DEFAULT_BASE_DELAY_MS,
+  DEFAULT_MAX_DELAY_MS,
+} from "@/constants/retry";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -12,7 +12,12 @@ const isAbortError = (error: unknown): boolean =>
 
 export const withRetry = async <T>(
   fn: () => Promise<T>,
-  { retries = 3, baseDelayMs = 500, maxDelayMs = 8000, onRetry }: RetryOptions = {},
+  {
+    retries = DEFAULT_RETRIES,
+    baseDelayMs = DEFAULT_BASE_DELAY_MS,
+    maxDelayMs = DEFAULT_MAX_DELAY_MS,
+    onRetry,
+  }: RetryOptions = {},
 ): Promise<T> => {
   let attempt = 0;
 

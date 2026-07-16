@@ -1,26 +1,18 @@
 "use client";
 
-import { useDropzone, type Accept } from "react-dropzone";
+import { useDropzone } from "react-dropzone";
 import { cn } from "@/lib/utils";
 import { formatBytes } from "@/lib/fileSize";
 import { AlertTriangle, UploadCloud } from "lucide-react";
-
-type PropsType = {
-  onAddFiles: (files: File[]) => void;
-  accept?: Accept;
-  maxSize?: number;
-  maxFiles?: number;
-};
-
-const DEFAULT_MAX_SIZE = 20 * 1024 * 1024 * 1024;
-const DEFAULT_MAX_FILES = 20;
+import { DropzoneProps } from "@/types/dropzone";
+import { DEFAULT_MAX_SIZE, DEFAULT_MAX_FILES } from "@/constants/dropzone";
 
 const Dropzone = ({
   onAddFiles,
   accept,
   maxSize = DEFAULT_MAX_SIZE,
   maxFiles = DEFAULT_MAX_FILES,
-}: PropsType) => {
+}: DropzoneProps) => {
   const onDrop = (acceptedFiles: File[]) => {
     if (acceptedFiles.length > 0) onAddFiles(acceptedFiles);
   };

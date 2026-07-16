@@ -3,25 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
-import { Send, ListOrdered, Cpu } from "lucide-react";
-
-const STRATEGY_LIST = [
-  {
-    title: "Traditional",
-    path: "/",
-    icon: Send,
-  },
-  {
-    title: "Chunk · Sequential",
-    path: "/chunk/sequential",
-    icon: ListOrdered,
-  },
-  {
-    title: "Chunk · Worker Pool",
-    path: "/chunk/worker-pool",
-    icon: Cpu,
-  },
-];
+import { STRATEGY_LIST } from "@/constants/strategyTab";
 
 const StrategyTab = () => {
   const pathName = usePathname();

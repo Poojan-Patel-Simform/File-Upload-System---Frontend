@@ -2,13 +2,9 @@
 
 import { cn } from "@/lib/utils";
 import { useEffect, useRef } from "react";
+import { UploadLogsProps } from "@/types/uploadLogs";
 
-type PropsType = {
-  logs: string[];
-  className?: string;
-};
-
-const UploadLogs = ({ logs, className }: PropsType) => {
+const UploadLogs = ({ logs, className }: UploadLogsProps) => {
   // Sentinel div at the end of the log list — scrolling it into view is a
   // simple way to keep the panel pinned to the newest line.
   const bottomRef = useRef<HTMLDivElement>(null);

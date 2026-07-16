@@ -2,8 +2,7 @@ import { ChunkUploadResponse, FileChunk } from "@/types/file";
 import { sha256Hex } from "@/lib/hash";
 import { withRetry } from "@/lib/retry";
 import api from "@/lib/axios";
-
-export const CHUNK_RETRIES = 3;
+import { CHUNK_RETRIES } from "@/constants/upload";
 
 /**
  * Uploads a single chunk (with a checksum for integrity) and retries on

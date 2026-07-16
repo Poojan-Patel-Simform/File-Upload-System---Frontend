@@ -1,6 +1,5 @@
 import { NetworkHint, NetworkInformationLike } from "@/types/network";
-
-const DEFAULT_CONCURRENCY = 5;
+import { DEFAULT_CONCURRENCY } from "@/constants/network";
 
 export const getNetworkHint = (): NetworkHint => {
   if (typeof navigator === "undefined") {

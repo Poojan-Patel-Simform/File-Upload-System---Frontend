@@ -1,15 +1,5 @@
-export type ResumableUploadRecord = {
-  fileHash: string;
-  fileName: string;
-  fileSize: number;
-  uploadId: string;
-  totalChunks: number;
-  uploadedChunks: number;
-  strategy: string;
-  updatedAt: number;
-};
-
-const STORAGE_KEY_PREFIX = "upload-resume:";
+import { ResumableUploadRecord } from "@/types/resume";
+import { STORAGE_KEY_PREFIX } from "@/constants/resume";
 
 const keyFor = (fileHash: string) => `${STORAGE_KEY_PREFIX}${fileHash}`;
 

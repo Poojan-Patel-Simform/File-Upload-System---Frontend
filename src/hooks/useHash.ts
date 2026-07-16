@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import type { HashWorkerMessage } from "@/workers/hash.worker";
+import type { HashWorkerMessage } from "@/types/hashWorker";
 
 /**
  * Computes a file's SHA-256 hash off the main thread via a Web Worker.

@@ -1,6 +1,4 @@
-export type HashWorkerMessage =
-  | { type: "done"; hash: string }
-  | { type: "error"; message: string };
+import { HashWorkerMessage } from "@/types/hashWorker";
 
 const ctx: {
   onmessage: ((event: MessageEvent<File>) => void) | null;

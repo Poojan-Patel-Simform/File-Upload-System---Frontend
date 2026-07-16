@@ -3,7 +3,8 @@
 import FileDetails from "@/components/FileDetails";
 import UploadProgress from "@/components/UploadProgress";
 import { Button } from "@/components/ui/button";
-import { FileUploadingStatusEnum, UploadFileItem } from "@/types/file";
+import { FileUploadingStatusEnum } from "@/types/file";
+import { UploadFileListItemProps } from "@/types/uploadFileListItem";
 import {
   History,
   Pause,
@@ -14,21 +15,6 @@ import {
   X,
 } from "lucide-react";
 
-// The optional callbacks below gate their corresponding button's visibility
-// directly (composition over boolean props) — a page opts in/out of
-// pause/resume/remove/resume-detection UI simply by omitting the prop,
-// rather than passing separate showPause/showResume/etc. booleans.
-type PropsType = {
-  item: UploadFileItem;
-  onCancel: (id: string) => void;
-  onRetry: (id: string) => void;
-  onPause?: (id: string) => void;
-  onResume?: (id: string) => void;
-  onRemove?: (id: string) => void;
-  onResumeDetected?: (id: string) => void;
-  onStartFresh?: (id: string) => void;
-};
-
 const UploadFileListItem = ({
   item,
   onCancel,
@@ -38,7 +24,7 @@ const UploadFileListItem = ({
   onRemove,
   onResumeDetected,
   onStartFresh,
-}: PropsType) => {
+}: UploadFileListItemProps) => {
   const { id, file, status, progress, errorMessage, logs, resumableUploadId } =
     item;
 

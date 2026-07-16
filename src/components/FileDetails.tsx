@@ -3,36 +3,10 @@
 import { useEffect } from "react";
 import { formatBytes } from "@/lib/fileSize";
 import { getFileType } from "@/lib/fileType";
-import { FileType } from "@/types/file";
-import {
-  File,
-  FileArchive,
-  FileAudio,
-  FileCode,
-  FileImage,
-  FileSpreadsheet,
-  FileText,
-  FileVideo,
-} from "lucide-react";
+import { FileDetailsProps } from "@/types/fileDetails";
+import { FILE_TYPE_ICON } from "@/constants/fileDetails";
 
-type PropsType = {
-  file: File | null;
-};
-
-const FILE_TYPE_ICON: Record<FileType, typeof File> = {
-  image: FileImage,
-  video: FileVideo,
-  audio: FileAudio,
-  pdf: FileText,
-  document: FileText,
-  spreadsheet: FileSpreadsheet,
-  presentation: FileText,
-  archive: FileArchive,
-  text: FileCode,
-  unknown: File,
-};
-
-const FileDetails = ({ file }: PropsType) => {
+const FileDetails = ({ file }: FileDetailsProps) => {
   const fileType = file ? getFileType(file.name) : "unknown";
   const canPreview = fileType === "image" || fileType === "video";
 
