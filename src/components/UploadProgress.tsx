@@ -7,7 +7,6 @@ import { FileUploadingStatusEnum } from "@/types/file";
 import {
   AlertTriangle,
   CheckCircle2,
-  Clock,
   GitMerge,
   Loader2,
   PauseCircle,
@@ -29,11 +28,6 @@ const STATUS_META: Record<
   [FileUploadingStatusEnum.IDLE]: {
     label: "Idle",
     icon: Loader2,
-    className: "text-muted-foreground",
-  },
-  [FileUploadingStatusEnum.QUEUED]: {
-    label: "Queued",
-    icon: Clock,
     className: "text-muted-foreground",
   },
   [FileUploadingStatusEnum.UPLOADING]: {

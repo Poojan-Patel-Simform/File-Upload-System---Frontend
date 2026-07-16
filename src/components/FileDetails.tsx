@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
+import { useEffect } from "react";
 import { formatBytes } from "@/lib/fileSize";
 import { getFileType } from "@/lib/fileType";
 import { FileType } from "@/types/file";
@@ -36,10 +36,7 @@ const FileDetails = ({ file }: PropsType) => {
   const fileType = file ? getFileType(file.name) : "unknown";
   const canPreview = fileType === "image" || fileType === "video";
 
-  const previewUrl = useMemo(() => {
-    if (!file || !canPreview) return null;
-    return URL.createObjectURL(file);
-  }, [file, canPreview]);
+  const previewUrl = !file || !canPreview ? null : URL.createObjectURL(file);
 
   // Revokes the previous object URL whenever previewUrl changes (new file, or
   // canPreview toggling) and on unmount, so blob URLs don't leak memory.

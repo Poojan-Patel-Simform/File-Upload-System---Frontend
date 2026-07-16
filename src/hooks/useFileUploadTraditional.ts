@@ -1,9 +1,8 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import api from "@/lib/axios";
 import { FileUploadingStatusEnum, UploadFileItem } from "@/types/file";
-import { useUploadQueue } from "@/contexts/UploadQueueContext";
 
 /**
  * Traditional (single-shot) file upload hook.
@@ -13,14 +12,13 @@ import { useUploadQueue } from "@/contexts/UploadQueueContext";
  * the simplest of the three upload strategies.
  *
  * @returns files - current upload items with status/progress/logs
- * @returns addFiles - add new File objects and enqueue them for upload
- * @returns handleUpload - start uploading a queued file
+ * @returns addFiles - add new File objects and start uploading them immediately
+ * @returns handleUpload - start uploading a file
  * @returns handleCancel - abort and hard-reset a file back to IDLE
  * @returns removeFile - cancel and drop a file from the list entirely
  */
 const useFileUploadTraditional = () => {
   const [files, setFiles] = useState<UploadFileItem[]>([]);
-  const queue = useUploadQueue();
 
   // Raw File objects keyed by id — kept in a ref instead of state since File
   // instances aren't meant to trigger re-renders and only need to be read back
@@ -31,29 +29,25 @@ const useFileUploadTraditional = () => {
   // request without waiting for a re-render.
   const abortControllersRef = useRef<Record<string, AbortController>>({});
 
-  const updateFile = useCallback(
-    (id: string, patch: Partial<UploadFileItem>) => {
-      setFiles((prev) =>
-        prev.map((item) => (item.id === id ? { ...item, ...patch } : item)),
-      );
-    },
-    [],
-  );
+  const updateFile = (id: string, patch: Partial<UploadFileItem>) => {
+    setFiles((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, ...patch } : item)),
+    );
+  };
 
-  const appendLog = useCallback((id: string, line: string) => {
+  const appendLog = (id: string, line: string) => {
     setFiles((prev) =>
       prev.map((item) =>
         item.id === id ? { ...item, logs: [...item.logs, line] } : item,
       ),
     );
-  }, []);
+  };
 
   // Status state machine (FileUploadingStatusEnum):
-  //   IDLE -> QUEUED (addFiles) -> UPLOADING (this function)
+  //   IDLE -> UPLOADING (this function, called directly from addFiles)
   //   UPLOADING -> COMPLETED | ERROR (this function, on request settle)
   //   any -> IDLE (handleCancel, forced hard reset)
-  const handleUpload = useCallback(
-    async (id: string) => {
+  const handleUpload = async (id: string) => {
       const file = fileMapRef.current[id];
       if (!file) return;
 
@@ -112,12 +106,9 @@ const useFileUploadTraditional = () => {
       } finally {
         delete abortControllersRef.current[id];
       }
-    },
-    [updateFile, appendLog],
-  );
+  };
 
-  const addFiles = useCallback(
-    (newFiles: File[]) => {
+  const addFiles = (newFiles: File[]) => {
       const newItems: UploadFileItem[] = [];
 
       for (const file of newFiles) {
@@ -127,7 +118,7 @@ const useFileUploadTraditional = () => {
         newItems.push({
           id,
           file,
-          status: FileUploadingStatusEnum.QUEUED,
+          status: FileUploadingStatusEnum.IDLE,
           progress: 0,
           errorMessage: null,
           logs: [],
@@ -137,16 +128,11 @@ const useFileUploadTraditional = () => {
       setFiles((prev) => [...prev, ...newItems]);
 
       for (const item of newItems) {
-        appendLog(item.id, "[queue] waiting for a free upload slot");
-        queue.enqueue(item.id, () => handleUpload(item.id));
+        void handleUpload(item.id);
       }
-    },
-    [handleUpload, queue, appendLog],
-  );
+  };
 
-  const handleCancel = useCallback(
-    (id: string) => {
-      queue.cancel(id);
+  const handleCancel = (id: string) => {
       abortControllersRef.current[id]?.abort();
       delete abortControllersRef.current[id];
 
@@ -156,20 +142,14 @@ const useFileUploadTraditional = () => {
         errorMessage: null,
       });
       appendLog(id, "[upload] cancelled, state reset");
-    },
-    [updateFile, appendLog, queue],
-  );
+  };
 
-  const removeFile = useCallback(
-    (id: string) => {
-      queue.cancel(id);
-      abortControllersRef.current[id]?.abort();
-      delete abortControllersRef.current[id];
-      delete fileMapRef.current[id];
-      setFiles((prev) => prev.filter((item) => item.id !== id));
-    },
-    [queue],
-  );
+  const removeFile = (id: string) => {
+    abortControllersRef.current[id]?.abort();
+    delete abortControllersRef.current[id];
+    delete fileMapRef.current[id];
+    setFiles((prev) => prev.filter((item) => item.id !== id));
+  };
 
   return {
     files,

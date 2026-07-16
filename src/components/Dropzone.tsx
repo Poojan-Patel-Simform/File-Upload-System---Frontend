@@ -1,6 +1,5 @@
 "use client";
 
-import { useCallback } from "react";
 import { useDropzone, type Accept } from "react-dropzone";
 import { cn } from "@/lib/utils";
 import { formatBytes } from "@/lib/fileSize";
@@ -22,12 +21,9 @@ const Dropzone = ({
   maxSize = DEFAULT_MAX_SIZE,
   maxFiles = DEFAULT_MAX_FILES,
 }: PropsType) => {
-  const onDrop = useCallback(
-    (acceptedFiles: File[]) => {
-      if (acceptedFiles.length > 0) onAddFiles(acceptedFiles);
-    },
-    [onAddFiles],
-  );
+  const onDrop = (acceptedFiles: File[]) => {
+    if (acceptedFiles.length > 0) onAddFiles(acceptedFiles);
+  };
 
   // isDragActive/fileRejections are local drag-interaction state, not upload
   // state — this component stays presentational despite calling a hook.

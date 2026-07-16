@@ -14,9 +14,9 @@ const STORAGE_KEY_PREFIX = "upload-resume:";
 const keyFor = (fileHash: string) => `${STORAGE_KEY_PREFIX}${fileHash}`;
 
 export const getResumableUpload = (
-  fileHash: string,
+  fileHash: string | null | undefined,
 ): ResumableUploadRecord | null => {
-  if (typeof window === "undefined") return null;
+  if (!fileHash || typeof window === "undefined") return null;
   try {
     const raw = window.localStorage.getItem(keyFor(fileHash));
     if (!raw) return null;
@@ -33,8 +33,10 @@ export const putResumableUpload = (record: ResumableUploadRecord): void => {
   } catch {}
 };
 
-export const clearResumableUpload = (fileHash: string): void => {
-  if (typeof window === "undefined") return;
+export const clearResumableUpload = (
+  fileHash: string | null | undefined,
+): void => {
+  if (!fileHash || typeof window === "undefined") return;
   try {
     window.localStorage.removeItem(keyFor(fileHash));
   } catch {}

@@ -50,7 +50,6 @@ export type ChunkUploadResponse = {
 
 export enum FileUploadingStatusEnum {
   IDLE,
-  QUEUED,
   UPLOADING,
   PAUSED,
   MERGING,

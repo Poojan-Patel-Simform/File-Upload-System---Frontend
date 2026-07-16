@@ -1,12 +1,6 @@
-export type NetworkHint = {
-  concurrency: number;
-};
+import { NetworkHint, NetworkInformationLike } from "@/types/network";
 
 const DEFAULT_CONCURRENCY = 5;
-
-type NetworkInformationLike = {
-  effectiveType?: "slow-2g" | "2g" | "3g" | "4g";
-};
 
 export const getNetworkHint = (): NetworkHint => {
   if (typeof navigator === "undefined") {

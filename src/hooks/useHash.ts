@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import type { HashWorkerMessage } from "@/workers/hash.worker";
 
 /**
@@ -21,7 +21,7 @@ const useHash = () => {
   // prematurely clear the loading flag while others are still running.
   const hashingCountRef = useRef(0);
 
-  const handleGetHash = useCallback((file: File): Promise<string> => {
+  const handleGetHash = (file: File): Promise<string> => {
     hashingCountRef.current += 1;
     setIsHashing(true);
 
@@ -51,7 +51,7 @@ const useHash = () => {
 
       worker.postMessage(file);
     });
-  }, []);
+  };
 
   return { hash, isHashing, handleGetHash };
 };
