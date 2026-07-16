@@ -4,7 +4,15 @@ import FileDetails from "@/components/FileDetails";
 import UploadProgress from "@/components/UploadProgress";
 import { Button } from "@/components/ui/button";
 import { FileUploadingStatusEnum, UploadFileItem } from "@/types/file";
-import { History, Pause, Play, RotateCcw, Trash2, Upload, X } from "lucide-react";
+import {
+  History,
+  Pause,
+  Play,
+  RotateCcw,
+  Trash2,
+  Upload,
+  X,
+} from "lucide-react";
 
 // The optional callbacks below gate their corresponding button's visibility
 // directly (composition over boolean props) — a page opts in/out of
@@ -95,7 +103,11 @@ const UploadFileListItem = ({
           )}
 
           {status !== FileUploadingStatusEnum.COMPLETED && (
-            <Button size="sm" variant="destructive" onClick={() => onCancel(id)}>
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={() => onCancel(id)}
+            >
               <X />
               Cancel
             </Button>
@@ -104,7 +116,11 @@ const UploadFileListItem = ({
           {onRemove &&
             (status === FileUploadingStatusEnum.IDLE ||
               status === FileUploadingStatusEnum.COMPLETED) && (
-              <Button size="icon-sm" variant="ghost" onClick={() => onRemove(id)}>
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                onClick={() => onRemove(id)}
+              >
                 <Trash2 />
               </Button>
             )}

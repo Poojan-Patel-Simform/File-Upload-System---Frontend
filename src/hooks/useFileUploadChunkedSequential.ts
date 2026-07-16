@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  FileChunk,
   FileUploadingStatusEnum,
   InitUploadResponse,
   UploadFileItem,
@@ -8,7 +9,6 @@ import {
 import { useRef, useState } from "react";
 import useHash from "./useHash";
 import { uploadChunk, CHUNK_RETRIES } from "@/lib/uploadChunk";
-import { runChunksSequentially } from "@/lib/chunkRunners/sequential";
 import { generateFileChunks } from "@/lib/fileProcess";
 import { mapServerStatusToClientStatus } from "@/lib/statusMapping";
 import {
@@ -18,24 +18,19 @@ import {
 } from "@/lib/resumeStore";
 import api from "@/lib/axios";
 
-type Chunks = ReturnType<typeof generateFileChunks>;
-
-// This hook juggles two separate concerns, each delegated to its own
-// module so this file only has to coordinate them:
-//   - chunk sending order      -> runChunksSequentially (src/lib/chunkRunners)
-//   - surviving a page refresh -> resumeStore (src/lib/resumeStore)
-
-// Everything this hook needs to remember about ONE file while it uploads,
-// in a single object. Read it top to bottom like a form: the raw file, the
-// hash/upload ids the server gave us, whether we're paused, and how far
-// we've gotten. One object per file id — nothing else to keep in sync.
+/**
+ * Everything the hook needs to remember about ONE file while it is
+ * uploading. There is exactly one UploadSession per file id, kept in
+ * `sessionsRef` below — this is the only place per-file upload state lives
+ * outside of React state, so there is nothing else to keep in sync.
+ */
 type UploadSession = {
   file: File;
   fileHash: string | null;
   uploadId: string | null;
   controller: AbortController | null;
   isPaused: boolean;
-  remainingChunks: Chunks;
+  remainingChunks: FileChunk[];
   uploadedCount: number;
   totalChunks: number;
 };
@@ -43,10 +38,15 @@ type UploadSession = {
 /**
  * Chunked, sequential-strategy file upload hook.
  *
- * For each file: split it into chunks, hash it (SHA-256, for dedup/integrity),
- * ask the server where to start (in case it's seen this file before), then
- * send chunks to the server one at a time via runChunksSequentially. Supports
- * pause/resume and resuming an upload left over from a previous session.
+ * For each file, in order:
+ *   1. Split it into chunks (generateFileChunks).
+ *   2. Hash it (SHA-256) so the server can dedupe/verify it.
+ *   3. Ask the server where to start ("/uploads/init") — it may already
+ *      have some chunks from a previous attempt.
+ *   4. Send the remaining chunks to the server ONE AT A TIME, in order.
+ *
+ * Pause/resume and resuming an upload left over from a previous browser
+ * session are both supported.
  *
  * @returns files - current upload items with status/progress/logs
  * @returns addFiles - add new File objects and kick off hashing + resume detection
@@ -62,9 +62,12 @@ const useFileUploadChunkedSequential = () => {
   const [files, setFiles] = useState<UploadFileItem[]>([]);
   const { handleGetHash } = useHash();
 
-  // One UploadSession per file id. This is the ONLY place per-file upload
-  // state lives outside of React state — no more, no other ref to hunt for.
+  // One UploadSession per file id. See the UploadSession comment above.
   const sessionsRef = useRef<Record<string, UploadSession>>({});
+
+  // ---------------------------------------------------------------------
+  // Step 1 — small helpers for updating a single file's row in `files`.
+  // ---------------------------------------------------------------------
 
   const updateFile = (id: string, patch: Partial<UploadFileItem>) => {
     setFiles((prev) =>
@@ -80,10 +83,16 @@ const useFileUploadChunkedSequential = () => {
     );
   };
 
-  // Recomputes progress % from the session and, if there's an active
-  // server-side upload, saves a snapshot so the browser can resume this
-  // upload later even after a refresh.
-  const reportProgress = (id: string) => {
+  // ---------------------------------------------------------------------
+  // Step 2 — progress reporting + saving a resume snapshot to storage.
+  //
+  // Every time a chunk finishes uploading we recompute the progress % and
+  // also write the current position to localStorage (via resumeStore), so
+  // that if the user refreshes the page mid-upload, the browser can offer
+  // to resume from where it left off.
+  // ---------------------------------------------------------------------
+
+  const updateProgress = (id: string) => {
     const session = sessionsRef.current[id];
     if (!session) return;
 
@@ -91,98 +100,186 @@ const useFileUploadChunkedSequential = () => {
       session.totalChunks > 0
         ? Math.round((session.uploadedCount / session.totalChunks) * 100)
         : 0;
+
     updateFile(id, { progress: percent });
 
-    if (session.fileHash && session.uploadId) {
-      putResumableUpload({
-        fileHash: session.fileHash,
-        fileName: session.file.name,
-        fileSize: session.file.size,
-        uploadId: session.uploadId,
-        totalChunks: session.totalChunks,
-        uploadedChunks: session.uploadedCount,
-        strategy: "sequential",
-        updatedAt: Date.now(),
-      });
-    }
+    if (!session.fileHash || !session.uploadId) return;
+
+    putResumableUpload({
+      fileHash: session.fileHash,
+      fileName: session.file.name,
+      fileSize: session.file.size,
+      uploadId: session.uploadId,
+      totalChunks: session.totalChunks,
+      uploadedChunks: session.uploadedCount,
+      strategy: "sequential",
+      updatedAt: Date.now(),
+    });
   };
 
-  // Sends whatever is left in session.remainingChunks and updates status
-  // once the runner is done. Status state machine (FileUploadingStatusEnum):
-  //   UPLOADING -> MERGING   (onLastChunkClaimed, right before the last chunk is sent)
-  //   UPLOADING -> COMPLETED (runner reports "completed")
-  //   UPLOADING -> PAUSED    (runner reports "paused")
-  //   UPLOADING -> ERROR     (runner reports "error", after CHUNK_RETRIES)
-  // handleResume calls this same function again to pick up where it left off.
+  // ---------------------------------------------------------------------
+  // Step 3 — send the chunks that are still left, one at a time.
+  //
+  // This reads directly from session.remainingChunks, so it works both for
+  // a brand new upload (handleUpload) and for resuming a paused one
+  // (handleResume) — both just call this same function.
+  // ---------------------------------------------------------------------
+
   const sendRemainingChunks = async (id: string) => {
     const session = sessionsRef.current[id];
     if (!session || !session.uploadId) return;
 
+    const uploadId = session.uploadId;
+    const chunks = session.remainingChunks;
+
     const controller = new AbortController();
     session.controller = controller;
 
-    const result = await runChunksSequentially({
-      chunks: session.remainingChunks,
-      uploadId: session.uploadId,
-      signal: controller.signal,
-      isPauseRequested: () => session.isPaused,
-      uploadChunk,
-      onLastChunkClaimed: () => {
+    for (let i = 0; i < chunks.length; i++) {
+      // The user asked to pause. Save whatever is left and stop — do not
+      // touch the server or the chunk list any further.
+      if (session.isPaused) {
+        session.remainingChunks = chunks.slice(i);
+        appendLog(
+          id,
+          `[upload] paused (${session.uploadedCount}/${session.totalChunks} done)`,
+        );
+        updateFile(id, { status: FileUploadingStatusEnum.PAUSED });
+        return;
+      }
+
+      const chunk = chunks[i];
+      const isLastChunk = i === chunks.length - 1;
+
+      if (isLastChunk) {
         updateFile(id, { status: FileUploadingStatusEnum.MERGING });
         appendLog(
           id,
           "[upload] all chunks sent — server is finalizing (merge + verify)...",
         );
-      },
-      onChunkUploaded: (chunk) => {
-        session.uploadedCount++;
-        reportProgress(id);
-        appendLog(
-          id,
-          `[upload] chunk ${chunk.index} uploaded (${session.uploadedCount}/${session.totalChunks})`,
-        );
-      },
-      onChunkRetry: (chunk, attempt, delayMs) =>
-        appendLog(
-          id,
-          `[upload] chunk ${chunk.index} failed (attempt ${attempt}/${CHUNK_RETRIES}), retrying in ${Math.round(delayMs)}ms`,
-        ),
-    });
+      }
 
-    if (result.outcome === "completed") {
+      try {
+        await uploadChunk(
+          chunk,
+          uploadId,
+          controller.signal,
+          (attempt, delayMs) =>
+            appendLog(
+              id,
+              `[upload] chunk ${chunk.index} failed (attempt ${attempt}/${CHUNK_RETRIES}), retrying in ${Math.round(delayMs)}ms`,
+            ),
+        );
+      } catch (err) {
+        const wasCancelled =
+          err instanceof DOMException && err.name === "AbortError";
+        if (wasCancelled) {
+          appendLog(id, "[upload] cancelled");
+          return;
+        }
+
+        appendLog(
+          id,
+          `[upload] failed permanently after ${CHUNK_RETRIES} retries`,
+        );
+        updateFile(id, {
+          status: FileUploadingStatusEnum.ERROR,
+          errorMessage: err instanceof Error ? err.message : "Unknown error",
+        });
+        return;
+      }
+
+      session.uploadedCount++;
+      updateProgress(id);
       appendLog(
         id,
-        `[upload] complete — ${session.totalChunks}/${session.totalChunks} chunks`,
+        `[upload] chunk ${chunk.index} uploaded (${session.uploadedCount}/${session.totalChunks})`,
       );
+    }
+
+    // The loop finished without pausing or failing — the file is fully
+    // uploaded and the server has merged it.
+    appendLog(
+      id,
+      `[upload] complete — ${session.totalChunks}/${session.totalChunks} chunks`,
+    );
+    updateFile(id, {
+      status: FileUploadingStatusEnum.COMPLETED,
+      progress: 100,
+    });
+    clearResumableUpload(session.fileHash);
+  };
+
+  // ---------------------------------------------------------------------
+  // Step 4 — hash the file (if needed) and ask the server where to start.
+  //
+  // Returns `{ alreadyCompleted: true }` when the server already has the
+  // full file (deduplication) — in that case there is nothing left to
+  // upload, and the caller should stop.
+  // ---------------------------------------------------------------------
+
+  const initializeUploadOnServer = async (
+    id: string,
+    session: UploadSession,
+  ) => {
+    const chunks = generateFileChunks(session.file);
+
+    if (!session.fileHash) {
+      appendLog(
+        id,
+        "[hash] computing file hash (SHA-256) for dedup/integrity check...",
+      );
+      session.fileHash = await handleGetHash(session.file);
+      appendLog(id, "[hash] done");
+    }
+
+    const response = await api.post("/uploads/init", {
+      fileHash: session.fileHash,
+      fileName: session.file.name,
+      fileSize: session.file.size,
+      totalChunks: chunks.length,
+    });
+
+    const initData: InitUploadResponse = response.data;
+    if (!initData.success) throw new Error("Failed to initialize upload");
+
+    const { uploadId, status: initStatus, uploadedChunks = [] } = initData.data;
+
+    session.uploadId = uploadId;
+    session.totalChunks = chunks.length;
+
+    const alreadyCompleted =
+      mapServerStatusToClientStatus(initStatus) ===
+      FileUploadingStatusEnum.COMPLETED;
+
+    if (alreadyCompleted) {
+      appendLog(id, "[upload] file already uploaded, deduplicated");
+      session.uploadedCount = chunks.length;
       updateFile(id, {
         status: FileUploadingStatusEnum.COMPLETED,
         progress: 100,
       });
       clearResumableUpload(session.fileHash);
-      return;
+      return { alreadyCompleted: true };
     }
 
-    if (result.outcome === "paused") {
-      session.remainingChunks = result.remainingChunks;
-      appendLog(
-        id,
-        `[upload] paused (${session.uploadedCount}/${session.totalChunks} done)`,
-      );
-      updateFile(id, { status: FileUploadingStatusEnum.PAUSED });
-      return;
-    }
+    const alreadyUploadedIndexes = new Set(uploadedChunks);
+    session.remainingChunks = chunks.filter(
+      (chunk) => !alreadyUploadedIndexes.has(chunk.index),
+    );
+    session.uploadedCount = alreadyUploadedIndexes.size;
+    updateProgress(id);
+    appendLog(
+      id,
+      `[upload] starting — ${alreadyUploadedIndexes.size}/${chunks.length} chunks already on server`,
+    );
 
-    if (result.outcome === "cancelled") {
-      appendLog(id, "[upload] cancelled");
-      return;
-    }
-
-    appendLog(id, `[upload] failed permanently after ${CHUNK_RETRIES} retries`);
-    updateFile(id, {
-      status: FileUploadingStatusEnum.ERROR,
-      errorMessage: result.error.message,
-    });
+    return { alreadyCompleted: false };
   };
+
+  // ---------------------------------------------------------------------
+  // Step 5 — the full upload flow for one file: initialize, then send.
+  // ---------------------------------------------------------------------
 
   const handleUpload = async (id: string) => {
     const session = sessionsRef.current[id];
@@ -195,59 +292,8 @@ const useFileUploadChunkedSequential = () => {
     session.isPaused = false;
 
     try {
-      const chunks = generateFileChunks(session.file);
-
-      if (!session.fileHash) {
-        appendLog(
-          id,
-          "[hash] computing file hash (SHA-256) for dedup/integrity check...",
-        );
-        session.fileHash = await handleGetHash(session.file);
-        appendLog(id, "[hash] done");
-      }
-
-      const response = await api.post("/uploads/init", {
-        fileHash: session.fileHash,
-        fileName: session.file.name,
-        fileSize: session.file.size,
-        totalChunks: chunks.length,
-      });
-
-      const initData: InitUploadResponse = response.data;
-      if (!initData.success) throw new Error("Failed to initialize upload");
-
-      const {
-        uploadId,
-        status: initStatus,
-        uploadedChunks = [],
-      } = initData.data;
-      session.uploadId = uploadId;
-      session.totalChunks = chunks.length;
-
-      if (
-        mapServerStatusToClientStatus(initStatus) ===
-        FileUploadingStatusEnum.COMPLETED
-      ) {
-        appendLog(id, "[upload] file already uploaded, deduplicated");
-        session.uploadedCount = chunks.length;
-        updateFile(id, {
-          status: FileUploadingStatusEnum.COMPLETED,
-          progress: 100,
-        });
-        clearResumableUpload(session.fileHash);
-        return;
-      }
-
-      const alreadyUploadedIndexes = new Set(uploadedChunks);
-      session.remainingChunks = chunks.filter(
-        (c) => !alreadyUploadedIndexes.has(c.index),
-      );
-      session.uploadedCount = alreadyUploadedIndexes.size;
-      reportProgress(id);
-      appendLog(
-        id,
-        `[upload] starting — ${alreadyUploadedIndexes.size}/${chunks.length} chunks already on server`,
-      );
+      const { alreadyCompleted } = await initializeUploadOnServer(id, session);
+      if (alreadyCompleted) return;
 
       await sendRemainingChunks(id);
     } catch (err) {
@@ -259,6 +305,8 @@ const useFileUploadChunkedSequential = () => {
     }
   };
 
+  // Resets a file's row to IDLE and kicks off handleUpload. Used both for
+  // brand new files and for restarting after a resume decision is made.
   const startUpload = (id: string) => {
     updateFile(id, {
       status: FileUploadingStatusEnum.IDLE,
@@ -267,12 +315,40 @@ const useFileUploadChunkedSequential = () => {
     handleUpload(id);
   };
 
+  // ---------------------------------------------------------------------
+  // Step 6 — adding files: create their sessions/rows, then hash each one
+  // to check whether a previous session already has a resumable upload for
+  // it. If not, start uploading right away.
+  // ---------------------------------------------------------------------
+
+  const detectResumableUpload = async (id: string) => {
+    const session = sessionsRef.current[id];
+    if (!session) return;
+
+    const fileHash = await handleGetHash(session.file);
+    session.fileHash = fileHash;
+
+    const record = getResumableUpload(fileHash);
+    const hasUnfinishedUpload =
+      record !== null && record.uploadedChunks < record.totalChunks;
+
+    if (!hasUnfinishedUpload) {
+      startUpload(id);
+      return;
+    }
+
+    updateFile(id, { resumableUploadId: record.uploadId });
+    appendLog(
+      id,
+      `[resume] resumable upload detected — ${record.uploadedChunks}/${record.totalChunks} chunks already uploaded previously`,
+    );
+  };
+
   const addFiles = (newFiles: File[]) => {
     const newItems: UploadFileItem[] = [];
 
     for (const file of newFiles) {
       const id = crypto.randomUUID();
-
       sessionsRef.current[id] = {
         file,
         fileHash: null,
@@ -297,26 +373,14 @@ const useFileUploadChunkedSequential = () => {
     setFiles((prev) => [...prev, ...newItems]);
 
     for (const item of newItems) {
-      void (async () => {
-        const session = sessionsRef.current[item.id];
-        const fileHash = await handleGetHash(item.file);
-        session.fileHash = fileHash;
-
-        const record = getResumableUpload(fileHash);
-
-        if (record && record.uploadedChunks < record.totalChunks) {
-          updateFile(item.id, { resumableUploadId: record.uploadId });
-          appendLog(
-            item.id,
-            `[resume] resumable upload detected — ${record.uploadedChunks}/${record.totalChunks} chunks already uploaded previously`,
-          );
-          return;
-        }
-
-        startUpload(item.id);
-      })();
+      detectResumableUpload(item.id);
     }
   };
+
+  // ---------------------------------------------------------------------
+  // Step 7 — user actions: resume detected upload, start fresh, pause,
+  // resume from pause, cancel, remove.
+  // ---------------------------------------------------------------------
 
   const handleResumeDetected = (id: string) => {
     appendLog(id, "[resume] resuming previous upload");
