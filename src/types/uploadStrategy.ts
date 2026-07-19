@@ -16,6 +16,9 @@ export type UploadSession = {
   remainingChunks: FileChunk[];
   uploadedCount: number;
   totalChunks: number;
+  // Strategy-specific data returned by a custom InitRequest (e.g. Cloudinary
+  // signing material). Unset for strategies that don't provide one.
+  meta?: Record<string, unknown>;
 };
 
 /**
@@ -45,7 +48,30 @@ export type ChunkSenderContext = {
 
 export type ChunkSender = (ctx: ChunkSenderContext) => Promise<SendChunksResult>;
 
+/**
+ * The outcome of asking the server to init/resume an upload session — the
+ * default implementation talks to `/uploads/init`, but a strategy can
+ * override this (via `initRequest`) to talk to a different endpoint and
+ * stash extra data (e.g. Cloudinary signing material) in `meta` for its
+ * ChunkSender to read back off `session.meta`.
+ */
+export type InitRequestResult = {
+  status: string;
+  uploadId: string;
+  uploadedChunks?: number[];
+  meta?: Record<string, unknown>;
+};
+
+export type InitRequest = (
+  session: UploadSession,
+  totalChunks: number,
+) => Promise<InitRequestResult>;
+
 export type UseFileUploadChunkedBaseOptions = {
   strategy: ResumableUploadRecord["strategy"];
   sendChunks: ChunkSender;
+  // Both optional and additive — omitting them reproduces today's exact
+  // behavior (POST /uploads/init, 1MB-50MB chunk-size tiers).
+  initRequest?: InitRequest;
+  generateChunks?: (file: File) => FileChunk[];
 };

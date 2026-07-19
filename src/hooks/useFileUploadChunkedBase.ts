@@ -1,7 +1,11 @@
 "use client";
 
 import { FileUploadingStatusEnum, InitUploadResponse, UploadFileItem } from "@/types/file";
-import { UploadSession, UseFileUploadChunkedBaseOptions } from "@/types/uploadStrategy";
+import {
+  InitRequest,
+  UploadSession,
+  UseFileUploadChunkedBaseOptions,
+} from "@/types/uploadStrategy";
 import { useRef, useState } from "react";
 import useHash from "./useHash";
 import { CHUNK_RETRIES } from "@/constants/upload";
@@ -13,6 +17,27 @@ import {
   putResumableUpload,
 } from "@/lib/resumeStore";
 import api from "@/lib/axios";
+
+// The default init/resume handshake, used when a strategy doesn't provide
+// its own `initRequest` — this is exactly what every strategy did before
+// `initRequest` existed, extracted unchanged so behavior stays identical.
+const defaultInitRequest: InitRequest = async (session, totalChunks) => {
+  const response = await api.post("/uploads/init", {
+    fileHash: session.fileHash,
+    fileName: session.file.name,
+    fileSize: session.file.size,
+    totalChunks,
+  });
+
+  const initData: InitUploadResponse = response.data;
+  if (!initData.success) throw new Error("Failed to initialize upload");
+
+  return {
+    status: initData.data.status,
+    uploadId: initData.data.uploadId,
+    uploadedChunks: initData.data.uploadedChunks ?? [],
+  };
+};
 
 /**
  * Shared implementation behind the chunked upload hooks (sequential and
@@ -35,6 +60,8 @@ import api from "@/lib/axios";
 const useFileUploadChunkedBase = ({
   strategy,
   sendChunks,
+  initRequest,
+  generateChunks,
 }: UseFileUploadChunkedBaseOptions) => {
   const [files, setFiles] = useState<UploadFileItem[]>([]);
   const { handleGetHash } = useHash();
@@ -189,7 +216,7 @@ const useFileUploadChunkedBase = ({
     id: string,
     session: UploadSession,
   ) => {
-    const chunks = generateFileChunks(session.file);
+    const chunks = (generateChunks ?? generateFileChunks)(session.file);
 
     if (!session.fileHash) {
       appendLogFor(
@@ -200,20 +227,16 @@ const useFileUploadChunkedBase = ({
       appendLogFor(id, "[hash] done");
     }
 
-    const response = await api.post("/uploads/init", {
-      fileHash: session.fileHash,
-      fileName: session.file.name,
-      fileSize: session.file.size,
-      totalChunks: chunks.length,
-    });
+    const result = await (initRequest ?? defaultInitRequest)(
+      session,
+      chunks.length,
+    );
 
-    const initData: InitUploadResponse = response.data;
-    if (!initData.success) throw new Error("Failed to initialize upload");
-
-    const { uploadId, status: initStatus, uploadedChunks = [] } = initData.data;
+    const { uploadId, status: initStatus, uploadedChunks = [] } = result;
 
     session.uploadId = uploadId;
     session.totalChunks = chunks.length;
+    session.meta = result.meta;
 
     const alreadyCompleted =
       mapServerStatusToClientStatus(initStatus) ===
