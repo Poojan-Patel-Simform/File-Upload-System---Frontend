@@ -1,20 +1,12 @@
 "use client";
 
-import { uploadChunk } from "@/lib/uploadChunk";
-import { CHUNK_RETRIES } from "@/constants/upload";
-import { getNetworkHint } from "@/lib/network";
+import { uploadChunk } from "@/lib/uploadChunkService";
+import { DEFAULT_RETRIES } from "@/constants";
+import { getNetworkHint } from "@/lib/networkService";
 import useFileUploadChunkedBase from "./useFileUploadChunkedBase";
-import { ChunkSender } from "@/types/uploadStrategy";
+import { UploadChunk } from "@/types/upload";
 
-/**
- * Sends the remaining chunks to the server CONCURRENTLY, using a small pool
- * of workers sized to the detected connection quality.
- *
- * All workers share one "next chunk index" cursor; each worker claims its
- * chunk with a synchronous read-then-increment (JS is single-threaded, so
- * two workers can never claim the same index).
- */
-const sendChunksWithWorkerPool: ChunkSender = async ({
+const sendChunksWithWorkerPool: UploadChunk = async ({
   session,
   uploadId,
   chunks,
@@ -32,8 +24,6 @@ const sendChunksWithWorkerPool: ChunkSender = async ({
     while (cursor < chunks.length) {
       if (firstError || pausedAtCursor !== null) return;
 
-      // The user asked to pause. Save whatever is left and stop — do not
-      // touch the server or the chunk list any further.
       if (session.isPaused) {
         pausedAtCursor = cursor;
         return;
@@ -44,10 +34,14 @@ const sendChunksWithWorkerPool: ChunkSender = async ({
       if (isLastChunk) reportLastChunkClaimed();
 
       try {
-        await uploadChunk(chunk, uploadId, controller.signal, (attempt, delayMs) =>
-          appendLog(
-            `[upload] chunk ${chunk.index} failed (attempt ${attempt}/${CHUNK_RETRIES}), retrying in ${Math.round(delayMs)}ms`,
-          ),
+        await uploadChunk(
+          chunk,
+          uploadId,
+          controller.signal,
+          (attempt, delayMs) =>
+            appendLog(
+              `[upload] chunk ${chunk.index} failed (attempt ${attempt}/${DEFAULT_RETRIES}), retrying in ${Math.round(delayMs)}ms`,
+            ),
         );
       } catch (err) {
         const wasCancelled =
@@ -76,15 +70,10 @@ const sendChunksWithWorkerPool: ChunkSender = async ({
   return { status: "completed" };
 };
 
-/**
- * Chunked, worker-pool-strategy file upload hook. See useFileUploadChunkedBase
- * for the shared hash/init/resume/pause/cancel flow — this file only owns
- * how chunks are sent: concurrently, through a small worker pool.
- */
 const useFileUploadChunkedWorkerPool = () =>
   useFileUploadChunkedBase({
     strategy: "worker-pool",
-    sendChunks: sendChunksWithWorkerPool,
+    onUploadChunks: sendChunksWithWorkerPool,
   });
 
 export default useFileUploadChunkedWorkerPool;

@@ -2,19 +2,19 @@
 
 import { cn } from "@/lib/utils";
 import { useEffect, useRef } from "react";
-import { UploadLogsProps } from "@/types/uploadLogs";
 
-const UploadLogs = ({ logs, className }: UploadLogsProps) => {
-  // Sentinel div at the end of the log list — scrolling it into view is a
-  // simple way to keep the panel pinned to the newest line.
+type PropsType = {
+  logs: string[];
+  className?: string;
+};
+
+const UploadLogs = ({ logs, className }: PropsType) => {
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // Re-scroll every time a new log line is appended.
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: "end" });
   }, [logs]);
 
-  // Hide the whole terminal panel rather than rendering an empty one.
   if (logs.length === 0) return null;
 
   return (

@@ -1,14 +1,9 @@
 import { ChunkUploadResponse, FileChunk } from "@/types/file";
-import { sha256Hex } from "@/lib/hash";
-import { withRetry } from "@/lib/retry";
+import { sha256Hex } from "@/lib/hashService";
+import { withRetry } from "@/lib/retryService";
 import api from "@/lib/axios";
-import { CHUNK_RETRIES } from "@/constants/upload";
+import { DEFAULT_RETRIES } from "@/constants";
 
-/**
- * Uploads a single chunk (with a checksum for integrity) and retries on
- * failure. Identical for every upload strategy — only the order/concurrency
- * in which chunks get handed to this function differs between strategies.
- */
 export const uploadChunk = async (
   chunk: FileChunk,
   uploadId: string,
@@ -35,6 +30,6 @@ export const uploadChunk = async (
         throw new Error(`Failed to upload chunk ${chunk.index}`);
       }
     },
-    { retries: CHUNK_RETRIES, onRetry },
+    { retries: DEFAULT_RETRIES, onRetry },
   );
 };

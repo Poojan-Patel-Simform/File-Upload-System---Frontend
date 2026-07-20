@@ -3,8 +3,7 @@
 import FileDetails from "@/components/FileDetails";
 import UploadProgress from "@/components/UploadProgress";
 import { Button } from "@/components/ui/button";
-import { FileUploadingStatusEnum } from "@/types/file";
-import { UploadFileListItemProps } from "@/types/uploadFileListItem";
+import { FileUploadingStatusEnum, UploadFileItem } from "@/types/file";
 import {
   History,
   Pause,
@@ -15,6 +14,17 @@ import {
   X,
 } from "lucide-react";
 
+type PropsType = {
+  item: UploadFileItem;
+  onCancel: (id: string) => void;
+  onRetry: (id: string) => void;
+  onPause?: (id: string) => void;
+  onResume?: (id: string) => void;
+  onRemove?: (id: string) => void;
+  onResumeDetected?: (id: string) => void;
+  onStartFresh?: (id: string) => void;
+};
+
 const UploadFileListItem = ({
   item,
   onCancel,
@@ -24,7 +34,7 @@ const UploadFileListItem = ({
   onRemove,
   onResumeDetected,
   onStartFresh,
-}: UploadFileListItemProps) => {
+}: PropsType) => {
   const { id, file, status, progress, errorMessage, logs, resumableUploadId } =
     item;
 

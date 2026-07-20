@@ -23,15 +23,17 @@ export const getChunkSize = (fileSize: number): number => {
   return 50 * MB;
 };
 
-export const generateFileChunks = (file: File): FileChunk[] => {
+export const generateFileChunks = (
+  file: File,
+  customChunkSize?: number,
+): FileChunk[] => {
   const chunks: FileChunk[] = [];
+  const resolvedChunkSize = customChunkSize ?? getChunkSize(file.size);
 
   let index = 0;
 
-  const chunkSize = getChunkSize(file.size);
-
-  for (let start = 0; start < file.size; start = start + chunkSize) {
-    const end = Math.min(start + chunkSize, file.size);
+  for (let start = 0; start < file.size; start += resolvedChunkSize) {
+    const end = Math.min(start + resolvedChunkSize, file.size);
 
     chunks.push({
       index,
@@ -43,5 +45,6 @@ export const generateFileChunks = (file: File): FileChunk[] => {
 
     index++;
   }
+
   return chunks;
 };

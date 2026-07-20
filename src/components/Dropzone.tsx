@@ -2,23 +2,28 @@
 
 import { useDropzone } from "react-dropzone";
 import { cn } from "@/lib/utils";
-import { formatBytes } from "@/lib/fileSize";
+import { formatBytes } from "@/lib/fileService";
 import { AlertTriangle, UploadCloud } from "lucide-react";
-import { DropzoneProps } from "@/types/dropzone";
-import { DEFAULT_MAX_SIZE, DEFAULT_MAX_FILES } from "@/constants/dropzone";
+import { DEFAULT_MAX_SIZE, DEFAULT_MAX_FILES } from "@/constants";
+import { type Accept } from "react-dropzone";
+
+type PropsType = {
+  onAddFiles: (files: File[]) => void;
+  accept?: Accept;
+  maxSize?: number;
+  maxFiles?: number;
+};
 
 const Dropzone = ({
   onAddFiles,
   accept,
   maxSize = DEFAULT_MAX_SIZE,
   maxFiles = DEFAULT_MAX_FILES,
-}: DropzoneProps) => {
+}: PropsType) => {
   const onDrop = (acceptedFiles: File[]) => {
     if (acceptedFiles.length > 0) onAddFiles(acceptedFiles);
   };
 
-  // isDragActive/fileRejections are local drag-interaction state, not upload
-  // state — this component stays presentational despite calling a hook.
   const { getRootProps, getInputProps, isDragActive, fileRejections } =
     useDropzone({
       onDrop,

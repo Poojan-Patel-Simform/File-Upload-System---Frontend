@@ -1,25 +1,28 @@
-import { ResumableUploadRecord } from "@/types/resume";
-import { STORAGE_KEY_PREFIX } from "@/constants/resume";
+import { UploadRecord } from "@/types/upload";
+import { STORAGE_KEY_PREFIX } from "@/constants";
 
 const keyFor = (fileHash: string) => `${STORAGE_KEY_PREFIX}${fileHash}`;
 
 export const getResumableUpload = (
   fileHash: string | null | undefined,
-): ResumableUploadRecord | null => {
+): UploadRecord | null => {
   if (!fileHash || typeof window === "undefined") return null;
   try {
     const raw = window.localStorage.getItem(keyFor(fileHash));
     if (!raw) return null;
-    return JSON.parse(raw) as ResumableUploadRecord;
+    return JSON.parse(raw) as UploadRecord;
   } catch {
     return null;
   }
 };
 
-export const putResumableUpload = (record: ResumableUploadRecord): void => {
+export const putResumableUpload = (record: UploadRecord): void => {
   if (typeof window === "undefined") return;
   try {
-    window.localStorage.setItem(keyFor(record.fileHash), JSON.stringify(record));
+    window.localStorage.setItem(
+      keyFor(record.fileHash),
+      JSON.stringify(record),
+    );
   } catch {}
 };
 

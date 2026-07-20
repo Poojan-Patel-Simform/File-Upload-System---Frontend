@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
-import { STRATEGY_LIST } from "@/constants/strategyTab";
+import { STRATEGY_LIST } from "@/constants";
 
 const StrategyTab = () => {
   const pathName = usePathname();

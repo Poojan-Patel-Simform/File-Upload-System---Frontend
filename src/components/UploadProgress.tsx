@@ -4,16 +4,22 @@ import { Progress } from "@/components/ui/progress";
 import UploadLogs from "@/components/UploadLogs";
 import { cn } from "@/lib/utils";
 import { FileUploadingStatusEnum } from "@/types/file";
-import { UploadProgressProps } from "@/types/uploadProgress";
-import { STATUS_META } from "@/constants/uploadProgress";
+import { STATUS_META } from "@/constants";
 import { AlertTriangle } from "lucide-react";
+
+type PropsType = {
+  status: FileUploadingStatusEnum;
+  progress: number;
+  errorMessage?: string | null;
+  logs?: string[];
+};
 
 const UploadProgress = ({
   status,
   progress,
   errorMessage,
   logs = [],
-}: UploadProgressProps) => {
+}: PropsType) => {
   if (status === FileUploadingStatusEnum.IDLE) return null;
 
   const { label, icon: Icon, className } = STATUS_META[status];

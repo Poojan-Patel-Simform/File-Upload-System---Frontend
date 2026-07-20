@@ -1,12 +1,14 @@
 "use client";
 
 import { useEffect } from "react";
-import { formatBytes } from "@/lib/fileSize";
-import { getFileType } from "@/lib/fileType";
-import { FileDetailsProps } from "@/types/fileDetails";
-import { FILE_TYPE_ICON } from "@/constants/fileDetails";
+import { formatBytes, getFileType } from "@/lib/fileService";
+import { FILE_TYPE_ICON } from "@/constants";
 
-const FileDetails = ({ file }: FileDetailsProps) => {
+type PropsType = {
+  file: File | null;
+};
+
+const FileDetails = ({ file }: PropsType) => {
   const fileType = file ? getFileType(file.name) : "unknown";
   const canPreview = fileType === "image" || fileType === "video";
 
@@ -31,11 +33,7 @@ const FileDetails = ({ file }: FileDetailsProps) => {
             type-keyed icon from FILE_TYPE_ICON. */}
         {previewUrl && fileType === "image" && (
           // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={previewUrl}
-            alt=""
-            className="size-full object-cover"
-          />
+          <img src={previewUrl} alt="" className="size-full object-cover" />
         )}
         {previewUrl && fileType === "video" && (
           <video src={previewUrl} className="size-full object-cover" muted />
