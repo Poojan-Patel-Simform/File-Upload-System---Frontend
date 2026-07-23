@@ -12,6 +12,7 @@ type PropsType = {
   progress: number;
   errorMessage?: string | null;
   logs?: string[];
+  resultUrl?: string;
 };
 
 const UploadProgress = ({
@@ -19,6 +20,7 @@ const UploadProgress = ({
   progress,
   errorMessage,
   logs = [],
+  resultUrl,
 }: PropsType) => {
   if (status === FileUploadingStatusEnum.IDLE) return null;
 
@@ -50,6 +52,17 @@ const UploadProgress = ({
           <AlertTriangle className="size-4 shrink-0" />
           {errorMessage}
         </p>
+      )}
+
+      {status === FileUploadingStatusEnum.COMPLETED && resultUrl && (
+        <a
+          href={resultUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="break-all text-sm text-primary underline"
+        >
+          View uploaded file
+        </a>
       )}
 
       <UploadLogs logs={logs} className="mt-1" />

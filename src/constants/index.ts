@@ -85,6 +85,7 @@ export const DEFAULT_MAX_DELAY_MS = 8000;
 export const CLOUDINARY_MIN_CHUNK_SIZE = 6 * 1024 * 1024;
 export const CLOUDINARY_WORKER_POOL_CONCURRENCY = 4;
 export const CLOUDINARY_SIGN_ENDPOINT = "/cloudinary/sign";
+export const CLOUDINARY_SAVE_ENDPOINT = "/cloudinary/save";
 
 // Strategy tab
 export const STRATEGY_LIST = [

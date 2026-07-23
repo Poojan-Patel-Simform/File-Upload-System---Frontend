@@ -2,13 +2,17 @@ import api from "@/lib/axios";
 import axios from "axios";
 import {
   CLOUDINARY_SIGN_ENDPOINT,
+  CLOUDINARY_SAVE_ENDPOINT,
   CLOUDINARY_MIN_CHUNK_SIZE,
   CLOUDINARY_WORKER_POOL_CONCURRENCY,
   DEFAULT_RETRIES,
 } from "@/constants";
 import {
   CloudinarySignApiResponse,
-  CloudinarySignResponse,
+  CloudinarySignResult,
+  CloudinarySignedData,
+  CloudinarySaveRequest,
+  CloudinarySaveApiResponse,
   CloudinaryChunkUploadResult,
   CloudinarySession,
   ChunkUploadContext,
@@ -23,10 +27,11 @@ import { CloudinarySessionExpiredError } from "./cloudinaryErrors";
 
 export const signCloudinaryUpload = async (
   publicId: string,
-): Promise<CloudinarySignResponse> => {
+  fileHash: string,
+): Promise<CloudinarySignResult> => {
   const response = await api.post<CloudinarySignApiResponse>(
     CLOUDINARY_SIGN_ENDPOINT,
-    { publicId },
+    { publicId, fileHash },
   );
 
   const body = response.data;
@@ -35,10 +40,22 @@ export const signCloudinaryUpload = async (
   return body.data;
 };
 
+export const saveCloudinaryAsset = async (
+  payload: CloudinarySaveRequest,
+): Promise<void> => {
+  const response = await api.post<CloudinarySaveApiResponse>(
+    CLOUDINARY_SAVE_ENDPOINT,
+    payload,
+  );
+
+  const body = response.data;
+  if (!body.success) throw new Error(body.message);
+};
+
 export const uploadChunkToCloudinary = async (
   chunk: FileChunk,
   totalFileSize: number,
-  sign: CloudinarySignResponse,
+  sign: CloudinarySignedData,
   uploadSessionId: string,
   signal: AbortSignal,
   onRetry: (attempt: number, delayMs: number) => void,
@@ -88,6 +105,7 @@ export const createSession = (file: File): CloudinarySession => {
   return {
     file,
     fileKey: computeFileKey(file),
+    fileHash: null,
     uploadSessionId,
     publicId: `uploads/${uploadSessionId}`,
     chunkSize,
@@ -95,6 +113,7 @@ export const createSession = (file: File): CloudinarySession => {
     completedChunks: new Set(),
     controller: null,
     sign: null,
+    resultUrl: undefined,
   };
 };
 
@@ -113,7 +132,7 @@ const runChunkWorkerPool = async (
 
       const chunk = chunks[cursor++];
       try {
-        await uploadChunkToCloudinary(
+        const result = await uploadChunkToCloudinary(
           chunk,
           context.file.size,
           context.sign,
@@ -123,7 +142,7 @@ const runChunkWorkerPool = async (
         );
 
         context.completedChunks.add(chunk.index);
-        context.onChunkComplete(chunk.index);
+        context.onChunkComplete(chunk.index, result);
       } catch (err) {
         if (isAbortError(err)) return;
         if (err instanceof CloudinarySessionExpiredError) {

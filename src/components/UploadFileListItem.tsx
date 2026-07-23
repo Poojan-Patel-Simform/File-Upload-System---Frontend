@@ -35,8 +35,16 @@ const UploadFileListItem = ({
   onResumeDetected,
   onStartFresh,
 }: PropsType) => {
-  const { id, file, status, progress, errorMessage, logs, resumableUploadId } =
-    item;
+  const {
+    id,
+    file,
+    status,
+    progress,
+    errorMessage,
+    logs,
+    resumableUploadId,
+    resultUrl,
+  } = item;
 
   // Both onResumeDetected and onStartFresh must be provided for this branch
   // to trigger — if either is missing, a resumableUploadId is silently
@@ -128,6 +136,7 @@ const UploadFileListItem = ({
         progress={progress}
         errorMessage={errorMessage}
         logs={logs}
+        resultUrl={resultUrl}
       />
     </div>
   );

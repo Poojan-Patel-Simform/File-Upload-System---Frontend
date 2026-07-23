@@ -65,4 +65,5 @@ export type UploadFileItem = {
   errorMessage: string | null;
   logs: string[];
   resumableUploadId?: string;
+  resultUrl?: string;
 };
